@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Mac .Ds_Store files
+.DS_Store
+
 # C extensions
 *.so
 
@@ -77,6 +80,12 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# IntelliJ IDEA
+.idea
+*.iws
+#*.iml
+#*.ipr
+
 # IPython
 profile_default/
 ipython_config.py
@@ -127,3 +136,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Certificate files
+*.crt
+*.key
+*.pass
+*.pem
