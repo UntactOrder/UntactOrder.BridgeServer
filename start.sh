@@ -2,8 +2,8 @@
 # https://growingsaja.tistory.com/330
 echo -n "INFO:get passphrase and certificate key with permission of "
 whoami
-passphrase="$(</etc/certserver/ssl.pass)"
-key="$(cat /etc/certserver/rootCA.key)"
+passphrase="$(</etc/bridgeserver/ssl.pass)"
+key="$(cat /etc/bridgeserver/bridge.key)"
 
 start_date=`date "+%Y.%m.%d_%H:%M:%S"`
 

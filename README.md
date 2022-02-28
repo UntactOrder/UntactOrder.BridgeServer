@@ -1,4 +1,4 @@
-# [EN]UntactOrder: Non-Contact Order<br/>[KO]언택트오더: 비대면 주문
+# [EN] UntactOrder: Non-Contact Order<br/>[KO] 언택트오더: 비대면 주문
 UntactOrder Bridge Server(언택트오더 시스템 브릿지 서버; Intermediate server between PosServer and Firebase) <python 3.10>
 
 > [EN] This is a server for UntactOrder HTTPS Cert System.

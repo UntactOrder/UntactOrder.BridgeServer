@@ -24,9 +24,9 @@ if OS != "Windows":
 if not path.isdir(CERT_DIR):
     mkdir(CERT_DIR)
 
-# check if rootCA certificate is exist. => if it does, skip the process.
+# check if server certificate is exist. => if it does, skip the process.
 if isfile(f"{CERT_DIR}/{PASS_FILE}") and isfile(f"{CERT_DIR}/{CERT_FILE}") and isfile(f"{CERT_DIR}/{KEY_FILE}"):
-    print("INFO: root CA certificate already exists. Init process skipped.")
+    print("INFO: server certificate already exists. Init process skipped.")
     sys.exit(0)
 else:
     print(f"INFO: Certificate files not found. Create a directory called '{CERT_DIR}' automatically "
