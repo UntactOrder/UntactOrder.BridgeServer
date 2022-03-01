@@ -164,7 +164,7 @@ def get_arp_table_windows(gateway_ip: str, gateway_interface: str, internal_ip: 
 
         ip, mac, cache_type = re.sub(r" +", ' ', line).strip().split(' ')
 
-        cache_type = cache_type in ("static", "permanent")
+        cache_type = cache_type == "static"
 
         result[ip] = (mac, cache_type)
 
