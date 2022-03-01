@@ -1,7 +1,9 @@
 Flask~=2.0.2
 waitress~=2.0.0
 requests~=2.27.1
-geocoder~=1.38.1
 pyOpenSSL~=22.0.0
 
+geocoder~=1.38.1
 netifaces~=0.11.0
+
+rich~=10.14.0

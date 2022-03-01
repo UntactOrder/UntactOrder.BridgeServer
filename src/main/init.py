@@ -20,9 +20,10 @@ if OS != "Windows":
         print("ERROR: this program requires super user priv.")
         sys.exit(1)
 
-# create rootCA certificate directory.
-if not path.isdir(CERT_DIR):
-    mkdir(CERT_DIR)
+
+# [import root CA certificate.]
+__ROOT_CA__ = RootCA()
+
 
 # check if server certificate is exist. => if it does, skip the process.
 if isfile(f"{CERT_DIR}/{PASS_FILE}") and isfile(f"{CERT_DIR}/{CERT_FILE}") and isfile(f"{CERT_DIR}/{KEY_FILE}"):
