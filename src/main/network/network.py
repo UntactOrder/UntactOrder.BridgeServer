@@ -79,25 +79,28 @@ def get_arp_table_darwin(gateway_ip: str, gateway_interface: str, internal_ip: s
     :param internal_ip: internal ip address of the network interface
     :return: device, {ip: (mac_address, is_static), ...}
     """
-    TODO
-    arp_re = re.compile(
-        r'^\S+ \((?P<ip_address>[^\)]+)\) at (?P<hw_address>(?:[0-9a-f]{2}:){5}(?:[0-9a-f]{2})) on (?P<device>\S+) ifscope \[(?P<type>\S+)\]$')
-
     table = subprocess.check_output(['arp', '-a', '-n']).decode().split('\n')[:-1]
-    lines = [line for line in (arp_re.match(data).groupdict() for data in table) if line['device'] == gateway_interface]
-    if not [line for line in lines if line['ip_address'] == gateway_ip]:
-        raise ValueError("Gateway ip address not found in the arp table.")
 
     result = {}
-    for line in lines:
-        ip, mac, cache_type = line['ip_address'], line['hw_address'], line['type']
+    for line in [re.split('\s+', line) for line in table]:
+        for element in ['?', 'on', 'at']:
+            try:
+                line.remove(element)
+            except ValueError:
+                pass
+        ip, mac, device, *cache_type = line
+        ip = ip.replace('(', '').replace(')', '')
+        cache_type = cache_type[:-1]
 
-        if int(cache_type, 16) == 6:
-            cache_type = True
-        else:
-            cache_type = False
+        if device != gateway_interface:
+            continue
+
+        cache_type = "permanent" in cache_type
 
         result[ip] = (mac, cache_type)
+
+    if not result or gateway_ip not in result.keys():
+        raise ValueError("Gateway ip address not found in the arp table.")
 
     return gateway_interface, result
 
@@ -125,10 +128,7 @@ def get_arp_table_linux(gateway_ip: str, gateway_interface: str, internal_ip: st
     for line in lines:
         ip, _, cache_type, mac, _, _ = line
 
-        if int(cache_type, 16) == 6:
-            cache_type = True
-        else:
-            cache_type = False
+        cache_type = int(cache_type, 16) == 6
 
         result[ip] = (mac, cache_type)
 
@@ -164,10 +164,7 @@ def get_arp_table_windows(gateway_ip: str, gateway_interface: str, internal_ip: 
 
         ip, mac, cache_type = re.sub(r" +", ' ', line).strip().split(' ')
 
-        if cache_type in ("static", "permanent"):
-            cache_type = True
-        else:
-            cache_type = False
+        cache_type = cache_type in ("static", "permanent")
 
         result[ip] = (mac, cache_type)
 
@@ -200,10 +197,7 @@ def are_duplicated_mac_exist() -> bool:
 
     mac_list = [arp_info[ip][0] for ip in arp_info]
     mac_set = set(mac_list)
-    if len(mac_list) != len(mac_set):
-        return True
-    else:
-        return False
+    return len(mac_list) != len(mac_set)
 
 
 def set_arp_static(protocol_version: int, device: str, internal_ip: str, target_ip: str, target_mac: str) -> bool:
@@ -220,22 +214,27 @@ def set_arp_static(protocol_version: int, device: str, internal_ip: str, target_
         raise ValueError("Invalid protocol version.")
 
     # set the arp table
-    if OS == "Windows":
-        try:
-            device = int(device, 16)
-        except ValueError:
-            raise ValueError("Invalid device name.")
+    match OS:
+        case "Windows":
+            try:
+                device = int(device, 16)
+            except ValueError:
+                raise ValueError("Invalid device name.")
 
-        version = 4 if protocol_version == AF_INET else 6
+            version = 4 if protocol_version == AF_INET else 6
 
-        with open("set_static.cmd", "w+") as cmd:
-            cmd.write(ELEVATION_CMD)
-            cmd.write(f"arp -d {target_ip} {internal_ip}\n")
-            cmd.write(f"netsh interface ipv{version} add neighbors {device} {target_ip} {target_mac}\n")
+            with open("set_static.cmd", "w+") as cmd:
+                cmd.write(ELEVATION_CMD)
+                cmd.write(f"arp -d {target_ip} {internal_ip}\n")
+                cmd.write(f"netsh interface ipv{version} add neighbors {device} {target_ip} {target_mac}\n")
 
-        os.system("call set_static.cmd")
-    else:
-        os.system(f"arp -v -i {device} -s {target_ip} {target_mac}")
+            os.system("call set_static.cmd")
+        case "Linux":
+            os.system(f"arp -v -i {device} -s {target_ip} {target_mac}")
+        case "Darwin":
+            os.system(f"arp -s {target_ip} {target_mac} ifscope {device}")
+        case _:
+            raise NotImplementedError("Unsupported OS: {OS}")
 
     # check the setting has been applied successfully
     result = get_network_info(target_ip)
