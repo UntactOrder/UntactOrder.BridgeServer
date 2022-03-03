@@ -7,6 +7,7 @@ Description : BridgeServer Settings
 from os import path, mkdir
 import sys
 import platform
+import requests
 import ssl
 from getpass import getpass
 from OpenSSL import crypto
@@ -40,31 +41,28 @@ class UnitType(object):
 UNIT_TYPE = UnitType.BRIDGE
 unit_type = "bridge" if UNIT_TYPE == UnitType.BRIDGE else "pos" if UNIT_TYPE == UnitType.POS else "cert"
 
-# certificate path settings
-CERT_DIR = "cert" if OS == "Windows" else f"/etc/{unit_type}server"
-if not path.isdir(CERT_DIR):
-    mkdir(CERT_DIR)
-CERT_FILE = path.join(CERT_DIR, f"{unit_type}.crt")
-KEY_FILE = path.join(CERT_DIR, f"{unit_type}.key")
-PASS_FILE = path.join(CERT_DIR, "ssl.pass")
-ROOT_CA = path.join(CERT_DIR, "rootCA.crt")
-BUNDLE_CERT = path.join("root", "rootca.bundlecert")
-
-# server settings path
-SETTING_DIR = "data"
-if path.isdir(SETTING_DIR):
-    mkdir(SETTING_DIR)
-SETTING_FILE_EXT = path.join(SETTING_DIR, f".{unit_type}setting")
-CERT_SERVER = path.join("root", "rootca" + SETTING_FILE_EXT)
-GATEWAY = path.join(SETTING_DIR, "gateway" + SETTING_FILE_EXT)
-DB_LIST = path.join(SETTING_DIR, "db" + SETTING_FILE_EXT)
-
 # organization name
 ORGANIZATION = "UntactOrder"
+
+# certificate path settings
+__CERT_DIR__ = "cert" if OS == "Windows" else f"/etc/{unit_type}server"
+if not path.isdir(__CERT_DIR__):
+    mkdir(__CERT_DIR__)
+
+# server settings path
+__SETTING_DIR__ = "data"
+if not path.isdir(__SETTING_DIR__):
+    mkdir(__SETTING_DIR__)
+__SETTING_FILE_EXT__ = path.join(__SETTING_DIR__, f".{unit_type}setting")
+DB_LIST_FILE = path.join(__SETTING_DIR__, "db" + __SETTING_FILE_EXT__)
+FIREBASE_API_KEY_FILE = path.join(__SETTING_DIR__, "firebase" + __SETTING_FILE_EXT__)
+SSO_API_KEY_FILE = path.join(__SETTING_DIR__, "sso" + __SETTING_FILE_EXT__)
 
 
 class NetworkConfig(object):
     """ Network Setting """
+
+    __GATEWAY_FILE__ = path.join(__SETTING_DIR__, "gateway" + __SETTING_FILE_EXT__)
 
     def __init__(self):
         # gateway settings for block arp attack
@@ -79,33 +77,46 @@ class NetworkConfig(object):
         self.internal_ip = info['internal_ip']
         self.external_ip = info['external_ip']
 
-        if not path.isfile(GATEWAY):
-            with open(GATEWAY, 'w+', encoding='utf-8') as gateway:
+        if not path.isfile(__GATEWAY_FILE__):
+            with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
                 gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
         else:
-            with open(GATEWAY, 'r', encoding='utf-8') as gateway:
+            with open(__GATEWAY_FILE__, 'r', encoding='utf-8') as gateway:
                 gateway_ip, gateway_mac = gateway.read().split(",")
 
-            if gateway_ip != self.gateway_ip or gateway_mac != self.gateway_mac:
-                print(f"[red]WARNING: Gateway address or mac has changed."
-                      f" {gateway_ip} => {self.gateway_ip} | {gateway_mac} => {self.gateway_mac}[/red]")
+            if gateway_ip != self.gateway_ip:
+                print(f"[red]WARNING: Gateway ip address has changed. {gateway_ip} => {self.gateway_ip}\n[/red]"
+                      f"[yellow]Did you changed your gateway device recently? "
+                      f"If so, this script overwrite the previous record(ip, mac) and proceed.[/yellow] (y to yes) : ",
+                      end='', flush=True)
+                if input().lower() == 'y':
+                    with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
+                        gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
+                    print("[blue> Overwrite Success.[/blue]")
+                else:
+                    print("[blue]> Overwrite Aborted. Do manually check your gateway status.[/blue]")
+                    sys.exit(1)
+            elif gateway_mac != self.gateway_mac:
+                print(f"[red]WARNING: Gateway mac address has changed. {gateway_mac} => {self.gateway_mac}[/red]")
                 if network.are_duplicated_mac_exist():
-                    print("[red]> Duplicated MAC address exist. It may be an ARP vulnerability attack, "
+                    print("[red]> Duplicated MAC addresses are exist. This may be an ARP vulnerability attack, "
                           "so proceed after restoring to the previous state. "
                           "If it doesn't work normally, please check your network connection.[/red]")
                     self.gateway_ip = gateway_ip
                     self.gateway_mac = gateway_mac
                 else:
-                    print("[green]> ARP attack is not detected. Proceeding...[/green]")
-                    print("[yellow]Did you changed your gateway device recently? "
-                          "If so, this script overwrite the previous record(ip, mac) and proceed.[/yellow] (y to yes)")
-                    if input().lower() != 'y':
-                        print("[blue]>Overwrite Aborted. Do manually check your gateway status.[/blue]")
-                        sys.exit(1)
+                    print("[yellow]> Duplicated MAC addresses are not detected. But, it may still be an ARP attack. "
+                          "If you agree(enter Y/y), this script will perform the mac restore operation.[/yellow]\n"
+                          "[red]By entering something that is not y, you can overwrite the recorded mac and proceed. "
+                          "So, do this only when you can be sure that this is not an ARP attack.[/red] (y to yes) : ",
+                          end='', flush=True)
+                    if input().lower() == 'y':
+                        self.gateway_ip = gateway_ip
+                        self.gateway_mac = gateway_mac
                     else:
-                        with open(GATEWAY, 'w+', encoding='utf-8') as gateway:
+                        with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
                             gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
-                        print("[blue]Overwrite Success.[/blue]")
+                        print("[blue> Overwrite Success.[/blue]")
 
         network.set_arp_static(self.ip_version, self.device, self.internal_ip, self.gateway_ip, self.gateway_mac)
 
@@ -125,15 +136,26 @@ class NetworkConfig(object):
 class RootCA(object):
     """ RootCA Certificate Storage Object """
 
+    __ROOT_CA_FILE__ = path.join(__CERT_DIR__, "rootCA.crt")
+    __BUNDLE_CERT_FILE__ = path.join("root", "rootca.bundlecert")
+
+    @classmethod
+    @property
+    def cert_file(cls):
+        """ return root CA certificate file path. """
+        return cls.__ROOT_CA_FILE__
+
+    __CERT_SERVER_FILE__ = path.join("root", "rootca" + __SETTING_FILE_EXT__)
+
     def __init__(self):
         # check if root CA ip setting is exist.
-        if not path.isfile(f"{SETTING_DIR}/{ROOT_CA}"):
+        if not path.isfile(self.__ROOT_CA_FILE__):
             print("Root-CA ip address setting is not found. Please set the ip address of the root CA.")
-            with open(path.join(SETTING_DIR, ROOT_CA), 'w+') as file:
+            with open(self.__CERT_SERVER_FILE__, 'w+') as file:
                 self.IP_ADDRESS = input("Root-CA IP Address: ")
                 file.write(self.IP_ADDRESS)
         else:
-            with open(path.join(SETTING_DIR, ROOT_CA), 'r', encoding='utf-8') as file:
+            with open(self.__ROOT_CA_FILE__, 'r', encoding='utf-8') as file:
                 self.IP_ADDRESS = file.read().strip()
 
         # get root CA certificate
@@ -170,9 +192,13 @@ class RootCA(object):
 class ServerCert(object):
     """ BridgeServer Keypair Storage Object """
 
+    __CERT_FILE__ = path.join(__CERT_DIR__, f"{unit_type}.crt")
+    __KEY_FILE__ = path.join(__CERT_DIR__, f"{unit_type}.key")
+    __PASS_FILE__ = path.join(__CERT_DIR__, "ssl.pass")
+
     def __init__(self):
         # check if certificate is exist.
-        if not path.isfile(CERT_FILE):
+        if not path.isfile(__CERT_FILE__):
             print(f"Certificate files not found. You must init(generate a certificate) first.")
             sys.exit(1)
 

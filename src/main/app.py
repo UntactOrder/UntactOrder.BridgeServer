@@ -1,17 +1,28 @@
 # -*- coding: utf-8 -*-
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-### Alias : BridgeServer.app & Last Modded : 2022.02.24. ###
+### Alias : BridgeServer.app & Last Modded : 2022.03.02. ###
 Coded with Python 3.10 Grammar by IRACK000
-Description : ?
+Description : BridgeServer HTTP Server
 Reference : [create_app] https://stackoverflow.com/questions/57600034/waitress-command-line-returning-malformed-application-when-deploying-flask-web
             [Logging] https://stackoverflow.com/questions/52372187/logging-with-command-line-waitress-serve
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from flask import Flask, request, jsonify, make_response
 from waitress import serve
 
-from cert_generator import proceed_certificate_generation, UnitType
+from settings import print, DB_LIST_FILE
+from network import application
 
 
+# < Load Server Resources -------------------------------------------------------------------------------------------->
+# load db list
+with open(DB_LIST_FILE, 'r') as db_list_file:
+    from api.database_helper import DatabaseConnection
+    db_list = [line.split(',') for line in db_list_file.read().splitlines()]
+    DatabaseConnection.load_db_server(db_list)
+    del db_list
+
+
+# < Create Flask App ------------------------------------------------------------------------------------------------->
 def create_app():
     app = Flask(__name__)
 
@@ -20,6 +31,10 @@ def create_app():
         """ To check if the server is running """
         return f"Hello, {request.environ.get('HTTP_X_REAL_IP', request.remote_addr)}!"
 
+    def parse_json(request: )
+
+    # process AndroidClient's & DarwinClient's request
+    #
     @app.route('/cert_request/<unit_type>', methods=['POST'])
     def cert_request(unit_type) -> jsonify:
         """
@@ -37,6 +52,10 @@ def create_app():
                                                             client_public_ip, client_private_ip)  # generate certificate
         respond = {'crt': crt_dump.decode(), 'key': key_dump.decode()}  # create respond object
         return jsonify(respond)
+
+    # process OrderAssistant's & PosServer's request
+    #
+
 
     return app
 

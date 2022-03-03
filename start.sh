@@ -8,7 +8,7 @@ key="$(cat /etc/bridgeserver/bridge.key)"
 start_date=`date "+%Y.%m.%d_%H:%M:%S"`
 
 cd src/main
-python3 ./init.py
+python3 ./init.py && echo "INFO:server init done" || exit 1
 
 sudo -u ubuntu bash << EOF
 echo -n "INFO:server open with permission of "
