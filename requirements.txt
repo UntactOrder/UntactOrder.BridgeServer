@@ -9,5 +9,8 @@ netifaces~=0.11.0
 rich~=10.14.0
 
 PyMySQL~=1.0.2
+GitPython~=3.1.27
+cachetools~=4.2.4
 
 firebase-admin~=5.2.0
+

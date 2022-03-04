@@ -3,11 +3,15 @@
 ### Alias : BridgeServer.api.database_helper & Last Modded : 2022.02.27. ###
 Coded with Python 3.10 Grammar by purplepig4657
 Description : BridgeServer Database Helper
-Reference : ??
+Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.html#
+            [caching] https://stackoverflow.com/questions/50866911/caching-in-memory-with-a-time-limit-in-python
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+from __future__ import annotations
+
 import requests
 from threading import Timer
 from pymysql import Connection
+from cachetools.func import ttl_cache
 
 from git_wrapper import update_pos_server_info, update_pos_server_menu_list
 
@@ -21,12 +25,14 @@ class DatabaseConnection(object):
     __ROOT_CA__ = RootCA.cert_file
 
     @classmethod
-    def get_instance(cls, db_ip):
+    def get_instance(cls, db_ip=None) -> dict[str: DatabaseConnection] | DatabaseConnection | None:
         """ Get Database Connection Instance
         :param db_ip: database ip
         :return: DatabaseConnection instance
         """
-        return cls.__db_server_list__.get(db_ip)
+        if db_ip is None:
+            return cls.__db_server_list__
+        return cls.__db_server_list__.get(db_ip, None)
 
     @classmethod
     def load_db_server(cls, db_list: list):
@@ -38,9 +44,9 @@ class DatabaseConnection(object):
 
     def __init__(self, db_ip, port, user_name, password):
         self.__delayed_work__ = []  # delayed work list for emergency situation                                        #
-        #                         you should consider use temporary database for emergency situation                   #
-        #                         because, this delayed_work list has a risk which the data will be disappeared        #
-        #                         when the server is shut down. Be careful.                                            #
+        #                             you should consider use temporary database for emergency situation               #
+        #                             because, this delayed_work list has a risk which the data will be disappeared    #
+        #                             when the server is shut down. Be careful.                                        #
 
         def delayed_work_handler():
             """ Delayed Work Handler """
@@ -89,11 +95,12 @@ class DatabaseConnection(object):
         """ Database Schema : db_name - table_name - column_name
         userDatabase {
             registeredPhoneNumberList {
-                id : BIGINT PRIMARY KEY autoincrement | index
                 phoneNumber : VARCHAR(30) | phone number  # to prevent duplicate phone numbers from being registered
                 userId : VARCHAR(100) | user id
             }
             kakao_unique_id-userInfoTable {
+                firebaseUid : VARCHAR(200) | firebase uid
+                firebaseToken : VARCHAR(65535) | firebase token (limited to 20 tokens); csv, FILO
                 loginProvider : VARCHAR(30) | kakao  # required
                 legalName : VARCHAR(100) | user's legal name, not nickname  # optional
                 email : VARCHAR(100) | username@domain.com, not untactorder email  # optional
@@ -103,7 +110,8 @@ class DatabaseConnection(object):
                 lastAccessDate : VARCHAR(30) | 2022-01-01  # for legal process
             }
             kakao_unique_id-orderHistoryTable {
-                id : BIGINT PRIMARY KEY autoincrement | index
+                id : BIGINT PRIMARY KEY autoincrement | index  # index check required
+                businessName : VARCHAR(100) | business name
                 totalPrice : INT | total price
                 dbIpAddress : VARCHAR(100) | store database ip address
                 historyStoragePointer : VARCHAR(1000) | business_license_number-pos_number-2022-01-01_12:00:00:000000
@@ -118,7 +126,6 @@ class DatabaseConnection(object):
         """
         storeDatabase {
             registeredBusinessLicenseNumberList {
-                id : BIGINT PRIMARY KEY autoincrement | index 
                 businessLicenseNumber : VARCHAR(30) | business license number  # to prevent duplicate license numbers
                                                                                  from being registered
                 userId : VARCHAR(100) | user id
@@ -126,7 +133,7 @@ class DatabaseConnection(object):
             kakao_unique_id-pos_number-storeInfoTable {
                 businessLicenseNumber : VARCHAR(10) | business license number  # required
                 businessName : VARCHAR(100) | business name  # required
-                businessAddress : VARCHAR(100) | business address  # required
+                businessAddress : VARCHAR(500) | business address  # required
                 businessPhoneNumber : VARCHAR(30) | business phone number  # required
                 businessEmail : VARCHAR(100) | business email  # optional
                 businessWebsite : VARCHAR(300) | business website  # optional
@@ -151,11 +158,11 @@ class DatabaseConnection(object):
         }"""
         """
         orderHistoryDatabase {  # Order history must be located on the same server as the store account's.
-            business_license_number-pos_number-2022-01-01_12:00:00:000000 {  # store info + order datetime as order id
+            business_license_number-pos_number-table_number-2022-01-01_12:00:00:000000 {  # store info + order datetime
                 id : INT PRIMARY KEY autoincrement | index
                 userPhone : VARCHAR(30)
-                orderTable : INT | table number
                 orderStatus : TINYINT | 0(null)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
+                paymentMethod : TINYINT | 0(null)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay
                 menuName : VARCHAR(300) | menu name  # be careful of the size
                 menuPrice : INT | menu price
                 menuQuantity : INT | menu quantity
@@ -308,35 +315,92 @@ class DatabaseConnection(object):
             self.__order_history_database__.commit()
         return result
 
+    def get_registered_phone_number_list(self) -> dict:
+        """ Get registered phone number list from user database. """
+        return {}
 
-class User(object):
+
+class _CachableUnitObject(object):
+    """ Cachable unit object. (Memory LRU Caching)
+        * Cached object will be deleted when the object is not accessed for two hours.
+        * If the object is accessed again before the time limit, the object's remaining time is automatically extended.
+        * When an object is deleted, this code does not guarantee that the object is deleted from memory.
+        * * It only removes Alias, and after that, the garbage collector will completely erase the object from memory.
+        * * So, even if the object is in use elsewhere, it'll not be a problem to be removed from the cache of this code.
+    """
+    __cache_max_size__ = 128  # max cache size
+    __cache_max_time__ = 7200  # max cache time (sec)
+
+    @classmethod
+    @ttl_cache(maxsize=__cache_max_size__, ttl=__cache_max_time__)
+    def get_cached_object(cls, key) -> _CachableUnitObject | None:
+        return cls.__cached_object__.get(key, None)
+
+
+
+class User(_CachableUnitObject):
     __cached_users__ = {}
 
     @staticmethod
-    def get_user_by_order_token():
+
+    @staticmethod
+    def get_user_by_order_token(store_owner_id: str, pos_number: int, order_token: str) -> User:
+        """ Get user by order token. """
+
 
     @classmethod
-    def get_user_by_id(cls, user_id):
+    def get_user_by_email(cls, user_id: str, db_ip: str) -> User:
         if user_id not in cls.cached_users:
             user = User.query.get(user_id)
             User.cached_users[user_id] = user
 
         return User.cached_users[user_id]
-    def
 
-    def __init__(self):
-        self.firebase_uid = None
-        self.firebase_token = None
-        self.user_id = None
+    @classmethod
+    def get_user_by_phone_number(cls, phone_number) -> User | None:
+        db_list = DatabaseConnection.get_instance()
+        for host, db in db_list.items():
+            registered_phone_number_list = db.get_registered_phone_number_list()
+            if phone_number in registered_phone_number_list:
+                return User.get_user_by_email(registered_phone_number_list[phone_number], host)
+        return None  # there's no user with this phone number.
 
-        self.password = None
-        self.user_name = None
-        self.email = None
-        self.is_active = None
-        self.is_admin = None
+    @classmethod
+    def sign_in(cls) -> User:
+        pass
+
+    @classmethod
+    def sign_up(cls) -> User:
+        pass
+
+    def __init__(self, firebase_uid=None, ):
+        @property
+        def firebase_uid():
+            self.firebase_uid =
+            return self.firebase_uid
+        self.firebase_uid = firebase_uid
+        self.firebase_token = []
+        self.user_id = None  # kakao/naver + _unique_id
+        self.db_server = None  # database server
+
+        @property
+        def email():
+            if self.user_id and self.db_server:
+                return self.user_id + '@' + self.db_server
+            else:
+                raise ValueError("User id and database server are not set.")
+        self.email = email
+
+        self.login_provider = None  # kakao/naver
+        self.legal_name = None
+        self.phone_number = None
+        self.user_email = None
+        self.age = None
+        self.gender = None
+        self.lastAccessDate = None
 
 
-class Store(object):
+class Store(_CachableUnitObject):
     __cached_stores__ = {}
 
     @staticmethod
@@ -360,3 +424,7 @@ class Store(object):
         self.email = None
         self.is_active = None
         self.is_admin = None
+
+    def get_customer_by_order_token(self, order_token):
+        """ Get customer by order token. """
+        return User.get_user_by_order_token(self.business_license_number, order_token)
