@@ -8,10 +8,11 @@ Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.h
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from __future__ import annotations
 
-import requests
 from threading import Timer
+
 from pymysql import Connection
 from cachetools.func import ttl_cache
+from iso4217 import Currency
 
 from git_wrapper import update_pos_server_info, update_pos_server_menu_list
 
@@ -23,6 +24,11 @@ class DatabaseConnection(object):
 
     from settings import RootCA
     __ROOT_CA__ = RootCA.cert_file
+
+    # Identifier Names
+    # https://mariadb.com/kb/en/identifier-names/
+    MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
+    MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
 
     @classmethod
     def get_instance(cls, db_ip=None) -> dict[str: DatabaseConnection] | DatabaseConnection | None:
@@ -43,7 +49,7 @@ class DatabaseConnection(object):
             cls.__db_server_list__[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
 
     def __init__(self, db_ip, port, user_name, password):
-        self.__delayed_work__ = []  # delayed work list for emergency situation                                        #
+        self.__delayed_work__ = []  # delayed work list for emergency situation (async concept)                        #
         #                             you should consider use temporary database for emergency situation               #
         #                             because, this delayed_work list has a risk which the data will be disappeared    #
         #                             when the server is shut down. Be careful.                                        #
@@ -57,6 +63,9 @@ class DatabaseConnection(object):
                 work()
                 print(f"[green]INFO: A Delayed Work Finished. (left={len(self.__delayed_work__)}) "
                       f"[in Database Connection][/green]")
+            self.__user_database__.commit()
+            self.__store_database__.commit()
+            self.__order_history_database__.commit()
 
         def start_delay_work_timer():
             """ Start Delay Work Timer """
@@ -96,10 +105,16 @@ class DatabaseConnection(object):
         userDatabase {
             registeredPhoneNumberList {
                 phoneNumber : VARCHAR(30) | phone number  # to prevent duplicate phone numbers from being registered
-                userId : VARCHAR(100) | user id
+                userId : VARCHAR(40) | user id
             }
-            kakao_unique_id-userInfoTable {
-                firebaseUid : VARCHAR(200) | firebase uid
+            kakao_unique_id-userInfo {  # userInfoTable
+                                        # table name length limit is 64
+                                        # 64 >= 40 +1+ 8(up to 10) = 49(up to 51)
+                                        # # 40 : user id length limit
+                                               ::: len("kakao_0000000000") == 16
+                                               ::: len("naver_00000000") == 14
+                                        # # 8 : table name length limit
+                firebaseUid : VARCHAR(100) | firebase uid
                 firebaseToken : VARCHAR(65535) | firebase token (limited to 20 tokens); csv, FILO
                 loginProvider : VARCHAR(30) | kakao  # required
                 legalName : VARCHAR(100) | user's legal name, not nickname  # optional
@@ -109,14 +124,16 @@ class DatabaseConnection(object):
                 gender : TINYINT | 1=male, 2=female, 3=neutral, 4=etc, 0=none  # optional
                 lastAccessDate : VARCHAR(30) | 2022-01-01  # for legal process
             }
-            kakao_unique_id-orderHistoryTable {
+            kakao_unique_id-orderHis {  # orderHistoryTable
                 id : BIGINT PRIMARY KEY autoincrement | index  # index check required
-                businessName : VARCHAR(100) | business name
+                businessName : VARCHAR(100) | business name-0
                 totalPrice : INT | total price
                 dbIpAddress : VARCHAR(100) | store database ip address
-                historyStoragePointer : VARCHAR(1000) | business_license_number-pos_number-2022-01-01_12:00:00:000000
+                historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
+                                        | business_regi_number-pos_number-table_number-20220101_120000000000-ISO4217
             }
-            kakao_unique_id-userDatabaseAlterHistoryTable {  # only record database update and delete, not add 
+            kakao_unique_id-alterHis {  # userDatabaseAlterHistoryTable
+                                       # only record database update and delete, not add 
                 id : BIGINT PRIMARY KEY autoincrement | index
                 alterDateTime : VARCHAR(30) | 2022-01-01_12:00:00:000000
                 alterType : TINYINT | 1=update, 2=delete
@@ -126,12 +143,19 @@ class DatabaseConnection(object):
         """
         storeDatabase {
             registeredBusinessLicenseNumberList {
-                businessLicenseNumber : VARCHAR(30) | business license number  # to prevent duplicate license numbers
-                                                                                 from being registered
-                userId : VARCHAR(100) | user id
+                identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
+                                                                                   from being registered
+                userId : VARCHAR(40) | user id
             }
-            kakao_unique_id-pos_number-storeInfoTable {
-                businessLicenseNumber : VARCHAR(10) | business license number  # required
+            kakao_unique_id-pos_number-storeInfo {  # storeInfoTable
+                                                    # 64 >= 40 +1+ 3 +1+ 8(up to 10) = 53(up to 55)
+                                                    # # 40 : user id length limit
+                                                           ::: len("kakao_0000000000") == 16
+                                                           ::: len("naver_00000000") == 14
+                                                    # # 3 : pos number length limit (0 ~ 999)
+                                                    # # 8 : table name length limit
+                ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
+                businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
                 businessName : VARCHAR(100) | business name  # required
                 businessAddress : VARCHAR(500) | business address  # required
                 businessPhoneNumber : VARCHAR(30) | business phone number  # required
@@ -143,11 +167,11 @@ class DatabaseConnection(object):
                 businessSubCategory : VARCHAR(200) | business sub category  # optional
                 tableCapacity : INT | table capacity  # required
             }
-            kakao_unique_id-pos_number-storeTableStringTable {
+            kakao_unique_id-pos_number-tableAlias {  # storeTableStringTable
                 id : INT PRIMARY KEY autoincrement | index
                 tableString : VARCHAR(10) | table string  # required
             }
-            kakao_unique_id-pos_number-storeOrderTokenTable {
+            kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
                 id : INT PRIMARY KEY autoincrement | index
                 orderToken : VARCHAR(100) | user order token for pos_number
                 userEmail : VARCHAR(200) | customer id + db ip  # one customer can have only one token per pos one time.
@@ -158,7 +182,16 @@ class DatabaseConnection(object):
         }"""
         """
         orderHistoryDatabase {  # Order history must be located on the same server as the store account's.
-            business_license_number-pos_number-table_number-2022-01-01_12:00:00:000000 {  # store info + order datetime
+            ISO4217-business_registration_number-pos_number-table_number-20220101_120000000000 {
+                                                            # ISO4217 + store info + order datetime code as history name
+                                                            # ISO4217 is monetary unit code - ex : USD, EUR, KRW, etc.
+                                                            # # https://en.wikipedia.org/wiki/ISO_4217
+                                                            # length limit 64 >= 3 +1+ 27 +1+ 3 +1+ 4 +1+ 21 = 62
+                                                            # # 3 : ISO4217 code length limit (ISO4217)
+                                                            # # 27 : business registration number length limit
+                                                            # # 3 : pos number length limit (0 ~ 999)
+                                                            # # 4 : table number length limit (0 ~ 9999)
+                                                            # # 21 : datetime length limit (YYYYMMDD_HHMMSSSSSSSS)
                 id : INT PRIMARY KEY autoincrement | index
                 userPhone : VARCHAR(30)
                 orderStatus : TINYINT | 0(null)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
@@ -329,24 +362,24 @@ class _CachableUnitObject(object):
         * * So, even if the object is in use elsewhere, it'll not be a problem to be removed from the cache of this code.
     """
     __cache_max_size__ = 128  # max cache size
-    __cache_max_time__ = 7200  # max cache time (sec)
+    __cache_max_time__ = 60 * 60 * 2  # max cache time (sec) - 2 hours
 
     @classmethod
-    @ttl_cache(maxsize=__cache_max_size__, ttl=__cache_max_time__)
-    def get_cached_object(cls, key) -> _CachableUnitObject | None:
-        return cls.__cached_object__.get(key, None)
+    def ttl_cache_preset(cls):
+        """ A Preset for ttl caching. """
+        return ttl_cache(maxsize=cls.__cache_max_size__, ttl=cls.__cache_max_time__)
 
 
-
-class User(_CachableUnitObject):
-    __cached_users__ = {}
-
-    @staticmethod
+@_CachableUnitObject.ttl_cache_preset()
+class User(object):
+    """ Cachable User Data Unit object.
+        with this class, you can get and set user data from user database or GitHub or firebase.
+    """
 
     @staticmethod
     def get_user_by_order_token(store_owner_id: str, pos_number: int, order_token: str) -> User:
         """ Get user by order token. """
-
+        pass
 
     @classmethod
     def get_user_by_email(cls, user_id: str, db_ip: str) -> User:
@@ -399,9 +432,14 @@ class User(_CachableUnitObject):
         self.gender = None
         self.lastAccessDate = None
 
+    def set_new_order_history(self, business_name: str, total_price: int, ):
 
-class Store(_CachableUnitObject):
-    __cached_stores__ = {}
+
+@_CachableUnitObject.ttl_cache_preset()
+class Store(object):
+    """ Cachable Store Data Unit object.
+        with this class, you can get and set user data from user store or GitHub.
+    """
 
     @staticmethod
     def get_store_by_order_token():
@@ -428,3 +466,20 @@ class Store(_CachableUnitObject):
     def get_customer_by_order_token(self, order_token):
         """ Get customer by order token. """
         return User.get_user_by_order_token(self.business_license_number, order_token)
+
+    def get_pos_menu_list(self):
+        """ Get pos menu list. """
+        pass
+
+    def set_new_order_history(self, order_token, order_history):
+        """ Set new order history. """
+        pass
+
+    def set_monetary_unit_code(self, monetary_unit_code: str):
+        """ Set monetary unit code
+        :param monetary_unit_code: str - ex: KRW, USD, JPY, EUR, GBP
+        :raise ValueError: if monetary_unit_code is not valid
+        """
+        Currency(monetary_unit_code)  # check if the code is valid
+
+        pass
