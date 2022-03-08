@@ -9,21 +9,34 @@ Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.h
 from __future__ import annotations
 
 from threading import Timer
+from random import choice
+import string
 
 from pymysql import Connection
 from cachetools.func import ttl_cache
 from iso4217 import Currency
 
-from git_wrapper import update_pos_server_info, update_pos_server_menu_list
+if __name__ == '__main__':
+    import firebase_connector as fcon
+    from sso_provider import SSOProvider as sso
+    import git_wrapper as wgit
+else:
+    import api.firebase_connector as fcon
+    from api.sso_provider import SSOProvider as sso
+    import api.git_wrapper as wgit
 
 
 class DatabaseConnection(object):
     """ Database Connection Class for BridgeServer """
 
-    __db_server_list__ = {}  # database server instance list
+    __db_server_list__: dict[str: DatabaseConnection] = {}  # database server instance list
 
-    from settings import RootCA
-    __ROOT_CA__ = RootCA.cert_file
+    if __name__ == '__main__':
+        from src.main.settings import RootCA
+        __ROOT_CA__ = RootCA.cert_file
+    else:
+        from settings import RootCA
+        __ROOT_CA__ = RootCA.cert_file
 
     # Identifier Names
     # https://mariadb.com/kb/en/identifier-names/
@@ -39,6 +52,17 @@ class DatabaseConnection(object):
         if db_ip is None:
             return cls.__db_server_list__
         return cls.__db_server_list__.get(db_ip, None)
+
+    @classmethod
+    def load_balanced_get_instance(cls) -> DatabaseConnection | None:
+        """ Get Database Connection Instance with Load Balancing """
+        stored = {}
+        for db_ip, db_instance in cls.__db_server_list__.items():
+            if db_instance.__check_db_connection__():
+                stored[db_ip] = db_instance.calculate_disk_usage()
+        if len(stored) == 0:
+            return None
+        return next(iter(sorted(stored.items(), key=lambda item: item[1])))
 
     @classmethod
     def load_db_server(cls, db_list: list):
@@ -123,6 +147,11 @@ class DatabaseConnection(object):
                 age : TINYINT | age  # optional but required when ordering products with age restrictions
                 gender : TINYINT | 1=male, 2=female, 3=neutral, 4=etc, 0=none  # optional
                 lastAccessDate : VARCHAR(30) | 2022-01-01  # for legal process
+                                                           # If the user has not used the service for a year,
+                                                             the user information is should be deleted.
+                                                           # 30 days before deleting user information,
+                                                             the user should be notified of the fact
+                                                             that user info is scheduled to be deleted.
             }
             kakao_unique_id-orderHis {  # orderHistoryTable
                 id : BIGINT PRIMARY KEY autoincrement | index  # index check required
@@ -288,6 +317,9 @@ class DatabaseConnection(object):
 
         # TODO: fix this
 
+        self.__order_history_cursor__.execute(sql)
+        return True
+
     def __write_to_store_db__(self, **kwargs) -> bool:
         """ Write store info to store database. Do not commit in this function. """
 
@@ -306,6 +338,7 @@ class DatabaseConnection(object):
             pass
         sql = ""
         self.__order_history_cursor__.execute(sql)
+        return True
 
     def __write_to_order_history_db__(self, business_license_number: str, pos_number: int,
                                       date: str, order_history: dict) -> bool:
@@ -319,6 +352,7 @@ class DatabaseConnection(object):
         # TODO: fix this
         sql = f"{business_license_number}-{pos_number}-{date}"
         self.__order_history_cursor__.execute(sql)
+        return True
 
     def get_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
         """ Get order history from order history database. """
@@ -352,8 +386,23 @@ class DatabaseConnection(object):
         """ Get registered phone number list from user database. """
         return {}
 
+    def put_updated_last_access_date(self, user_id: str, date: str) -> bool:
+        """ Put updated last access date to user database. """
+        pass
 
-class _CachableUnitObject(object):
+    def put_new_firebase_token(self, user_id: str, token: str, flush: bool = False) -> bool:
+        """ Put new firebase token to user database. """
+        pass
+
+    def calculate_disk_usage(self) -> float:
+        """ Calculate disk usage in MB.
+        :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
+        """
+        # TODO: fix this
+        return 0.0
+
+
+class CachableUnit(object):
     """ Cachable unit object. (Memory LRU Caching)
         * Cached object will be deleted when the object is not accessed for two hours.
         * If the object is accessed again before the time limit, the object's remaining time is automatically extended.
@@ -370,7 +419,7 @@ class _CachableUnitObject(object):
         return ttl_cache(maxsize=cls.__cache_max_size__, ttl=cls.__cache_max_time__)
 
 
-@_CachableUnitObject.ttl_cache_preset()
+@CachableUnit.ttl_cache_preset()
 class User(object):
     """ Cachable User Data Unit object.
         with this class, you can get and set user data from user database or GitHub or firebase.
@@ -381,13 +430,23 @@ class User(object):
         """ Get user by order token. """
         pass
 
-    @classmethod
-    def get_user_by_email(cls, user_id: str, db_ip: str) -> User:
-        if user_id not in cls.cached_users:
-            user = User.query.get(user_id)
-            User.cached_users[user_id] = user
+    @staticmethod
+    def get_store_order_token(store_owner_id: str, pos_number: int, user_id: str) -> str:
+        """ Get store order token. 1 token by 1 user in 1 store in 1 pos at the same time. """
+        return Store.
 
-        return User.cached_users[user_id]
+    @classmethod
+    def get_user_by_firebase_token(cls, firebase_token: str) -> User | None:
+        """ Get user by firebase user id and db ip.
+            If the user has been disabled, an exception will be raised.
+        """
+        try:
+            email = fcon.get_user_by_token(firebase_token, app=None, check_revoked=True).email
+            return User(*email.split('@'))
+        except (fcon.auth.RevokedIdTokenError | fcon.auth.UserDisabledError):
+            raise ValueError("User has been disabled.")
+        except Exception:
+            return None
 
     @classmethod
     def get_user_by_phone_number(cls, phone_number) -> User | None:
@@ -395,18 +454,64 @@ class User(object):
         for host, db in db_list.items():
             registered_phone_number_list = db.get_registered_phone_number_list()
             if phone_number in registered_phone_number_list:
-                return User.get_user_by_email(registered_phone_number_list[phone_number], host)
+                return User(registered_phone_number_list[phone_number], host)
         return None  # there's no user with this phone number.
 
     @classmethod
-    def sign_in(cls) -> User:
-        pass
+    def sign_in_or_up(cls, firebase_phone_auth_token: str, sso_token: str, sso_provider: str) -> User:
+        """ Sign in or sign up.
+        :raise ValueError: If the phone auth token is invalid.
+        """
+        # get phone number from firebase phone auth token
+        try:
+            phone_auth = fcon.get_user_by_token(firebase_phone_auth_token)
+        except Exception:
+            raise ValueError("Invalid firebase phone auth token.")
+        phone_number = phone_auth.phone_number
 
-    @classmethod
-    def sign_up(cls) -> User:
-        pass
+        # delete phone auth user
+        fcon.delete_user(phone_auth.uid)
+        del phone_auth
 
-    def __init__(self, firebase_uid=None, ):
+        # check duplicated phone number
+
+
+        # get sso login user info
+        user_info = sso.get_user_by_token(sso_token, sso_provider)
+
+        # db load balancing
+        db = DatabaseConnection.load_balanced_get_instance()
+        if not db:
+            raise OSError("No database connection.")
+
+        # create or update firebase user
+        email = sso_provider + '_' + user_info['unique_id'] + '@' + db.host
+        password = sso_token
+        nickname = user_info['nickname']
+        profile_image = user_info['profile_image']
+        user_email = user_info['email']
+        gender = user_info['gender']
+        age = user_info['age']
+        if sso_provider == "naver":
+            legal_name = user_info['name']
+        try:
+            user = fcon.create_user(email=email, password=password, display_name=nickname, photo_url=profile_image)
+        except fcon.auth.EmailAlreadyExistsError:  # user already exists
+            user = fcon.get_user_by_firebase_email(email)
+            fcon.update_user(user.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
+
+        # create or update user in database
+        user = User(*email.split('@'))
+
+        # reserve password reset - 10 minutes later
+        def gen_random_password():
+            __LENGTH__ = 28
+            pool = string.ascii_letters + string.digits + string.punctuation
+            return "".join([choice(pool) for l in range(__LENGTH__)])
+
+        Timer(60*10, lambda: fcon.update_user(user.uid, password=gen_random_password())).start()
+
+    def __init__(self, user_id: str, db_ip: str):
         @property
         def firebase_uid():
             self.firebase_uid =
@@ -433,9 +538,22 @@ class User(object):
         self.lastAccessDate = None
 
     def set_new_order_history(self, business_name: str, total_price: int, ):
+        pass
+
+    def set_updated_last_access_date(self, date: str):
+        """ Put updated last access date to user database. """
+        DatabaseConnection.get_instance(self.db_server).put_updated_last_access_date(self.user_id, date)
+
+    def set_new_firebase_token(self, firebase_token: str, flush: bool = False):
+        """ Put new firebase token to user database.
+        :param firebase_token: Firebase token.
+        :param flush: If true, flush the old token.
+        """
+        DatabaseConnection.get_instance(self.db_server).put_new_firebase_token(self.user_id, firebase_token, flush)
 
 
-@_CachableUnitObject.ttl_cache_preset()
+
+@CachableUnit.ttl_cache_preset()
 class Store(object):
     """ Cachable Store Data Unit object.
         with this class, you can get and set user data from user store or GitHub.
@@ -451,6 +569,13 @@ class Store(object):
             Store.cached_stores[store_id] = store
 
         return Store.cached_stores[store_id]
+
+    @staticmethod
+    def get_store_list(firebase_token: str):
+
+    @staticmethod
+    def sign_in_or_up(firebase_token: str, business_registration_number: str, pos_number: int) -> Store:
+        pass
 
     def __init__(self):
         self.business_license_number = None

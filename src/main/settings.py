@@ -3,6 +3,7 @@
 ### Alias : BridgeServer.settings & Last Modded : 2022.02.27. ###
 Coded with Python 3.10 Grammar by IRACK000
 Description : BridgeServer Settings
+Reference : [PyCryptodome] https://louisdev.tistory.com/52
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from os import path, mkdir
 import sys
@@ -11,6 +12,11 @@ import requests
 import ssl
 from getpass import getpass
 from OpenSSL import crypto
+
+import base64
+from Crypto import Random
+from Crypto.Cipher import AES
+from Crypto.PublicKey import RSA
 
 builtin_print = print
 from rich import print
@@ -304,6 +310,31 @@ class ServerCert(object):
         with open(f"cert/{UNIT_TYPE}.crt", 'w+') as crt, open(f"cert/{UNIT_TYPE}.key", 'w+') as key:
             crt.write(cert_file)
             key.write(key_file)
+
+
+class AES128_Crypto:
+    def __init__(self, encrypt_key, iv):
+        self.BS = AES.block_size
+        self.encrypt_key = encrypt_key[:self.BS].encode(encoding='utf-8', errors='strict')
+        self.iv = iv[:self.BS].encode(encoding='utf-8', errors='strict')
+        self.pad = lambda s: bytes(s + (self.BS - len(s) % self.BS) * chr(self.BS - len(s) % self.BS), 'utf-8')
+        self.unpad = lambda s: s[0:-ord(s[-1:])]
+
+    def encrypt(self, raw):
+        raw = self.pad(raw)
+        cipher = AES.new(self.encrypt_key, AES.MODE_CBC, self.iv)
+
+        return base64.b64encode(cipher.encrypt(raw)).decode("utf-8")
+
+    def decrypt(self, encrypted_msg):
+        encrypted_msg = base64.b64decode(encrypted_msg)
+
+        cipher = AES.new(self.encrypt_key, AES.MODE_CBC, self.iv)
+        return self.unpad(cipher.decrypt(encrypted_msg)).decode('utf-8')
+
+    @staticmethod
+    def gen_key():
+        return RSA.generate(1024).export_key().decode().split("\n")[1][-AES.block_size:]
 
 
 if OS == "Windows":
