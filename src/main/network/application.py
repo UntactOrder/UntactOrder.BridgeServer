@@ -46,7 +46,7 @@ def process_sign_in_or_up(firebase_token: str, **kwargs):
         raise ValueError("Invalid arguments.")
 
 
-def add_firebase_token(firebase_token: str) -> bool:
+def add_fcm_token(firebase_token: str, fcm_token: str) -> bool:
     """ Adds the firebase token to the database.
     :param firebase_token: The firebase token of the user.
     """

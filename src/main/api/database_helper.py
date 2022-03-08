@@ -12,8 +12,10 @@ from threading import Timer
 from random import choice
 import string
 
-from pymysql import Connection
+from functools import cached_property
 from cachetools.func import ttl_cache
+
+from pymysql import Connection
 from iso4217 import Currency
 
 if __name__ == '__main__':
@@ -128,8 +130,8 @@ class DatabaseConnection(object):
         """ Database Schema : db_name - table_name - column_name
         userDatabase {
             registeredPhoneNumberList {
-                phoneNumber : VARCHAR(30) | phone number  # to prevent duplicate phone numbers from being registered
-                userId : VARCHAR(40) | user id
+                phoneNumber : VARCHAR(100) | phone number  # to prevent duplicate phone numbers from being registered
+                userId : VARCHAR(128) | user id, 1 <= uid <= 128
             }
             kakao_unique_id-userInfo {  # userInfoTable
                                         # table name length limit is 64
@@ -138,12 +140,9 @@ class DatabaseConnection(object):
                                                ::: len("kakao_0000000000") == 16
                                                ::: len("naver_00000000") == 14
                                         # # 8 : table name length limit
-                firebaseUid : VARCHAR(100) | firebase uid
-                firebaseToken : VARCHAR(65535) | firebase token (limited to 20 tokens); csv, FILO
-                loginProvider : VARCHAR(30) | kakao  # required
                 legalName : VARCHAR(100) | user's legal name, not nickname  # optional
                 email : VARCHAR(100) | username@domain.com, not untactorder email  # optional
-                phone : VARCHAR(30) | phone number  # required
+                phone : VARCHAR(100) | phone number  # required
                 age : TINYINT | age  # optional but required when ordering products with age restrictions
                 gender : TINYINT | 1=male, 2=female, 3=neutral, 4=etc, 0=none  # optional
                 lastAccessDate : VARCHAR(30) | 2022-01-01  # for legal process
@@ -152,6 +151,11 @@ class DatabaseConnection(object):
                                                            # 30 days before deleting user information,
                                                              the user should be notified of the fact
                                                              that user info is scheduled to be deleted.
+            }
+            kakao_unique_id-fcmToken {  # fcmTokenTable, firebase cloud messaging token
+                                        # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
+                timeStamp : VARCHAR(30) | 2020-01-01
+                token : VARCHAR(100) | firebase cloud messaging token
             }
             kakao_unique_id-orderHis {  # orderHistoryTable
                 id : BIGINT PRIMARY KEY autoincrement | index  # index check required
@@ -174,7 +178,7 @@ class DatabaseConnection(object):
             registeredBusinessLicenseNumberList {
                 identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
                                                                                    from being registered
-                userId : VARCHAR(40) | user id
+                userId : VARCHAR(128) | user id, 1 <= uid <= 128
             }
             kakao_unique_id-pos_number-storeInfo {  # storeInfoTable
                                                     # 64 >= 40 +1+ 3 +1+ 8(up to 10) = 53(up to 55)
@@ -186,23 +190,28 @@ class DatabaseConnection(object):
                 ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
                 businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
                 businessName : VARCHAR(100) | business name  # required
-                businessAddress : VARCHAR(500) | business address  # required
-                businessPhoneNumber : VARCHAR(30) | business phone number  # required
-                businessEmail : VARCHAR(100) | business email  # optional
-                businessWebsite : VARCHAR(300) | business website  # optional
-                businessOpenTime : VARCHAR(1000) | business open time  # optional
-                businessCloseTime : VARCHAR(1000) | business close time  # optional
-                businessCategory : VARCHAR(100) | business category  # required
-                businessSubCategory : VARCHAR(200) | business sub category  # optional
+                businessAddress : VARCHAR(1000) | business address  # required
+                businessPhoneNumber : VARCHAR(100) | business phone number  # required
+                businessEmail : VARCHAR(1000) | business email  # optional
+                businessWebsite : VARCHAR(10000) | business website  # optional
+                businessOpenTime : VARCHAR(10000) | business open time  # optional
+                businessCloseTime : VARCHAR(10000) | business close time  # optional
+                businessCategory : VARCHAR(1000) | business category  # required
+                businessSubCategory : VARCHAR(2000) | business sub category  # optional
                 tableCapacity : INT | table capacity  # required
             }
             kakao_unique_id-pos_number-tableAlias {  # storeTableStringTable
                 id : INT PRIMARY KEY autoincrement | index
                 tableString : VARCHAR(10) | table string  # required
             }
+            kakao_unique_id-pos_number-fcmToken {  # fcmTokenTable, firebase cloud messaging token
+                                                   # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
+                timeStamp : VARCHAR(30) | 2020-01-01
+                token : VARCHAR(100) | firebase cloud messaging token
+            }
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
                 id : INT PRIMARY KEY autoincrement | index
-                orderToken : VARCHAR(100) | user order token for pos_number
+                orderToken : VARCHAR(128) | user order token for pos_number
                 userEmail : VARCHAR(200) | customer id + db ip  # one customer can have only one token per pos one time.
                                                                 # token will be deleted after order is completed.
                                                                 # To prevent errors, tokens should not expire
@@ -222,7 +231,7 @@ class DatabaseConnection(object):
                                                             # # 4 : table number length limit (0 ~ 9999)
                                                             # # 21 : datetime length limit (YYYYMMDD_HHMMSSSSSSSS)
                 id : INT PRIMARY KEY autoincrement | index
-                userPhone : VARCHAR(30)
+                userId : VARCHAR(128) | user id, 1 <= uid <= 128
                 orderStatus : TINYINT | 0(null)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
                 paymentMethod : TINYINT | 0(null)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay
                 menuName : VARCHAR(300) | menu name  # be careful of the size
@@ -386,12 +395,30 @@ class DatabaseConnection(object):
         """ Get registered phone number list from user database. """
         return {}
 
+    def put_registered_phone_number_list(self) -> bool:
+        """ Put registered phone number list to user database. """
+        return False
+
+    def get_last_access_date(self) -> str:
+        """ Get last access date from user database. """
+        return ""
+
     def put_updated_last_access_date(self, user_id: str, date: str) -> bool:
         """ Put updated last access date to user database. """
         pass
 
-    def put_new_firebase_token(self, user_id: str, token: str, flush: bool = False) -> bool:
-        """ Put new firebase token to user database. """
+    def get_fcm_tokens(self) -> dict:
+        """ Get fcm tokens from user database. """
+        return {}
+
+    def put_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
+        """ Put new fcm token to user database.
+        :param token: Firebase Cloud Messaging token.
+        :param user_id: user id
+        :param pos_number: pos number or None (if None, token will be registered to user db / if not none, to store db)
+        :param flush: If true, flush the old(that have been registered for two days/months) token.
+        Ifsekjlsjelfkj
+        """
         pass
 
     def calculate_disk_usage(self) -> float:
@@ -503,6 +530,7 @@ class User(object):
         # create or update user in database
         user = User(*email.split('@'))
 
+
         # reserve password reset - 10 minutes later
         def gen_random_password():
             __LENGTH__ = 28
@@ -510,46 +538,49 @@ class User(object):
             return "".join([choice(pool) for l in range(__LENGTH__)])
 
         Timer(60*10, lambda: fcon.update_user(user.uid, password=gen_random_password())).start()
+        # Because of this timer, we have to shut down the Nginx reverse proxy server first
+        # # before the database server & backend server shutting down.
+        # By this way, new login requests will not come in.
+        # And after 10 minutes, the rest of the server can be shut down.
 
     def __init__(self, user_id: str, db_ip: str):
-        @property
-        def firebase_uid():
-            self.firebase_uid =
-            return self.firebase_uid
-        self.firebase_uid = firebase_uid
-        self.firebase_token = []
-        self.user_id = None  # kakao/naver + _unique_id
-        self.db_server = None  # database server
+        self.user_id = user_id  # kakao/naver + _unique_id
+        self.db_server = db_ip  # database server ip
+        self.email = self.user_id + '@' + self.db_server
 
-        @property
-        def email():
-            if self.user_id and self.db_server:
-                return self.user_id + '@' + self.db_server
-            else:
-                raise ValueError("User id and database server are not set.")
-        self.email = email
-
-        self.login_provider = None  # kakao/naver
         self.legal_name = None
         self.phone_number = None
         self.user_email = None
         self.age = None
         self.gender = None
-        self.lastAccessDate = None
+        self.last_access_date = None
+
+    @cached_property
+    def db_connection(self):
+        return DatabaseConnection.get_instance(self.db_server)
+
+    @cached_property
+    def fcm_token(self) -> list:
+
+        tokens = []
+        return tokens
+
+    @property
+    def
 
     def set_new_order_history(self, business_name: str, total_price: int, ):
         pass
 
     def set_updated_last_access_date(self, date: str):
         """ Put updated last access date to user database. """
-        DatabaseConnection.get_instance(self.db_server).put_updated_last_access_date(self.user_id, date)
+        self.db_connection.put_updated_last_access_date(self.user_id, date)
 
-    def set_new_firebase_token(self, firebase_token: str, flush: bool = False):
-        """ Put new firebase token to user database.
-        :param firebase_token: Firebase token.
-        :param flush: If true, flush the old token.
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+        """ Put new fcm token to user database.
+        :param fcm_token: Firebase Cloud Messaging token.
+        :param flush: If true, flush the old(that have been registered for two month) token.
         """
-        DatabaseConnection.get_instance(self.db_server).put_new_firebase_token(self.user_id, firebase_token, flush)
+        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, flush)
 
 
 
@@ -608,3 +639,10 @@ class Store(object):
         Currency(monetary_unit_code)  # check if the code is valid
 
         pass
+
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+        """ Put new fcm token to store database.
+        :param fcm_token: Firebase Cloud Messaging token.
+        :param flush: If true, flush the old(that have been registered for two days) token.
+        """
+        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, sfesfesflush)

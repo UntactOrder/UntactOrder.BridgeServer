@@ -63,10 +63,18 @@ def delete_user(user_id):
     auth.delete_user(user_id)
 
 
+def revoke_user_tokens(user_id: str):
+    """ Revoke all tokens issued to a user.
+    :param user_id: User ID
+    :reference: https://firebase.google.com/docs/auth/admin/manage-sessions
+    """
+    auth.revoke_refresh_tokens(user_id)
+
+
 @lru_cache
 def get_user_by_token(token: str, app=None, check_revoked=False) -> auth.UserRecord:
     """
-    Get User by Token.
+    Get User by Firebase ID Token.
     !WARNING! - Because of the lru caching, this function might return the email even after the user has been deleted.
     :param token: User Token. (A string of the encoded JWT.)
     :param app: An App instance (optional).
