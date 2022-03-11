@@ -20,7 +20,7 @@ def update_last_access_date(firebase_id_token: str) -> bool:
     :param firebase_id_token: The firebase id token of the user.
     :return:
     """
-    user = User.get_user_by_firebase_token(firebase_token)
+    user = User.get_user_by_firebase_token(firebase_id_token)
     if user is None:
         return False
     user.set_updated_last_access_date(time.strftime("%Y-%m-%d"))
