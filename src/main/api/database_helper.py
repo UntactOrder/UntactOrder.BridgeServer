@@ -188,6 +188,14 @@ class DatabaseConnection(object):
                                                     # # 8 : table name length limit
                 ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
                 businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
+                publicIp : VARCHAR(100) | public ip address  # required
+                wifiPassword : VARCHAR(65535) | wifi password  # required
+                gatewayIp : VARCHAR(100) | gateway ip address  # required
+                gatewayMac : VARCHAR(200) | gateway mac address  # required
+                posIp : VARCHAR(100) | pos server ip address  # required
+                posMac : VARCHAR(200) | pos server mac address  # required
+                posPort : INT | pos port number # required
+                --------------------------------------------------------------------------------
                 businessName : VARCHAR(100) | business name  # required
                 businessAddress : VARCHAR(1000) | business address  # required
                 businessDescription : VARCHAR(65535) | business description  # optional
