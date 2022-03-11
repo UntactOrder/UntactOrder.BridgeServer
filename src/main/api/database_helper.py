@@ -21,11 +21,9 @@ from iso4217 import Currency
 if __name__ == '__main__':
     import firebase_connector as fcon
     from sso_provider import SSOProvider as sso
-    import git_wrapper as wgit
 else:
     import api.firebase_connector as fcon
     from api.sso_provider import SSOProvider as sso
-    import api.git_wrapper as wgit
 
 
 class DatabaseConnection(object):
