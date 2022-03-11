@@ -67,10 +67,16 @@ class DatabaseConnection(object):
         return next(iter(sorted(stored.items(), key=lambda item: item[1])))
 
     @classmethod
-    def load_db_server(cls, db_list: list):
+    def load_db_server(cls, exclusive_db: tuple, db_list: list):
         """ Load Database Server Instance
+        :param exclusive_db: exclusive database info (db_ip, port, user_name, password)
         :param db_list: database server list [(db_ip, port, user_name, password), ...]
         """
+        # exclusive database
+        if exclusive_db:
+            cls.exclusive = ExclusiveDatabase(host=exclusive_db[0], port=exclusive_db[1], ssl_ca=cls.__ROOT_CA__,
+                                              user=exclusive_db[2], password=exclusive_db[3])
+
         for db_ip, port, user_name, password in db_list:
             cls.__db_server_list__[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
 
@@ -118,6 +124,8 @@ class DatabaseConnection(object):
         self.port = port
         self.__user_name__ = user_name
         self.__password__ = password
+
+        # common databases
         self.__user_database__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA__,
                                             user=self.__user_name__, password=self.__password__,
                                             db="userDatabase", charset='utf8')
@@ -129,10 +137,6 @@ class DatabaseConnection(object):
                                                      db="orderHistoryDatabase", charset='utf8')
         """ Database Schema : db_name - table_name - column_name
         userDatabase {
-            registeredPhoneNumberList {
-                phoneNumber : VARCHAR(100) | phone number  # to prevent duplicate phone numbers from being registered
-                userId : VARCHAR(128) | user id, 1 <= uid <= 128
-            }
             kakao_unique_id-userInfo {  # userInfoTable
                                         # table name length limit is 64
                                         # 64 >= 40 +1+ 8(up to 10) = 49(up to 51)
@@ -175,11 +179,6 @@ class DatabaseConnection(object):
         }"""
         """
         storeDatabase {
-            registeredBusinessLicenseNumberList {
-                identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
-                                                                                   from being registered
-                userId : VARCHAR(128) | user id, 1 <= uid <= 128
-            }
             kakao_unique_id-pos_number-storeInfo {  # storeInfoTable
                                                     # 64 >= 40 +1+ 3 +1+ 8(up to 10) = 53(up to 55)
                                                     # # 40 : user id length limit
@@ -191,6 +190,7 @@ class DatabaseConnection(object):
                 businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
                 businessName : VARCHAR(100) | business name  # required
                 businessAddress : VARCHAR(1000) | business address  # required
+                businessDescription : VARCHAR(65535) | business description  # optional
                 businessPhoneNumber : VARCHAR(100) | business phone number  # required
                 businessEmail : VARCHAR(1000) | business email  # optional
                 businessWebsite : VARCHAR(10000) | business website  # optional
@@ -198,7 +198,18 @@ class DatabaseConnection(object):
                 businessCloseTime : VARCHAR(10000) | business close time  # optional
                 businessCategory : VARCHAR(1000) | business category  # required
                 businessSubCategory : VARCHAR(2000) | business sub category  # optional
-                tableCapacity : INT | table capacity  # required
+            }
+            kakao_unique_id-pos_number-items {  # storeItemListTable
+                id : INT PRIMARY KEY autoincrement | index
+                name : VARCHAR(100) | item name  # required
+                price : INT | item price  # required
+                type : VARCHAR(100) | item type  # required
+                photoUrl : VARCHAR(65535) | item photo url  # optional
+                description : VARCHAR(65535) | item description  # optional
+                ingredient : VARCHAR(65535) | item ingredient  # optional
+                hashtag : VARCHAR(65535) | item hashtag  # optional
+                pinned : BOOLEAN | whether to recommend or not.  # optional
+                available : BOOLEAN | whether item is deprecated  # required
             }
             kakao_unique_id-pos_number-tableAlias {  # storeTableStringTable
                 id : INT PRIMARY KEY autoincrement | index
@@ -207,7 +218,7 @@ class DatabaseConnection(object):
             kakao_unique_id-pos_number-fcmToken {  # fcmTokenTable, firebase cloud messaging token
                                                    # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
                 timeStamp : VARCHAR(30) | 2020-01-01
-                token : VARCHAR(100) | firebase cloud messaging token
+                token : VARCHAR(4096) | firebase cloud messaging token
             }
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
                 id : INT PRIMARY KEY autoincrement | index
@@ -231,7 +242,7 @@ class DatabaseConnection(object):
                                                             # # 4 : table number length limit (0 ~ 9999)
                                                             # # 21 : datetime length limit (YYYYMMDD_HHMMSSSSSSSS)
                 id : INT PRIMARY KEY autoincrement | index
-                userId : VARCHAR(128) | user id, 1 <= uid <= 128
+                firebaseUid : VARCHAR(128) | user id, 1 <= uid <= 128
                 orderStatus : TINYINT | 0(null)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
                 paymentMethod : TINYINT | 0(null)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay
                 menuName : VARCHAR(300) | menu name  # be careful of the size
@@ -240,9 +251,6 @@ class DatabaseConnection(object):
             }  # total price can be calculated by sum_by_rows(menuPrice*menuQuantity)
         }
         """
-        self.__user_cursor__ = self.__user_database__.cursor()
-        self.__store_cursor__ = self.__store_database__.cursor()
-        self.__order_history_cursor__ = self.__order_history_database__.cursor()
 
         self.connected = self.__check_db_connection__()
 
@@ -283,8 +291,9 @@ class DatabaseConnection(object):
             pass
 
         sql = "SELECT * FROM store_info"
-        self.__store_cursor__.execute(sql)
-        result = self.__store_cursor__.fetchall()
+        self.store_cursor = self.__store_database__.cursor()
+        store_cursor.execute(sql)
+        result = store_cursor.fetchall()
         return result
 
     def __query_from_store_db__(self, **kwargs) -> dict:
@@ -301,8 +310,9 @@ class DatabaseConnection(object):
             pass
 
         sql = "SELECT * FROM store_info"
-        self.__store_cursor__.execute(sql)
-        result = self.__store_cursor__.fetchall()
+        store_cursor = self.__store_database__.cursor()
+        store_cursor.execute(sql)
+        result = self.store_cursor.fetchall()
         return result
 
     def __query_from_order_history_db__(self, business_license_number: str, pos_number: int,
@@ -313,8 +323,9 @@ class DatabaseConnection(object):
         if start_index is None:
             start_index = 0
         sql = f"{business_license_number}-{pos_number}-{date}"
-        self.__order_history_cursor__.execute(f"SELECT * FROM {sql}")
-        result = self.__order_history_cursor__.fetchall()
+        order_history_cursor = self.__order_history_database__.cursor()
+        order_history_cursor.execute(f"SELECT * FROM {sql}")
+        result = order_history_cursor.fetchall()
         return result
 
     def __write_to_user_db__(self, **kwargs) -> bool:
@@ -326,7 +337,8 @@ class DatabaseConnection(object):
 
         # TODO: fix this
 
-        self.__order_history_cursor__.execute(sql)
+        order_history_cursor = self.__order_history_database__.cursor()
+        order_history_cursor.execute(sql)
         return True
 
     def __write_to_store_db__(self, **kwargs) -> bool:
@@ -346,7 +358,8 @@ class DatabaseConnection(object):
         if 'date' in kwargs:
             pass
         sql = ""
-        self.__order_history_cursor__.execute(sql)
+        order_history_cursor = self.__order_history_database__.cursor()
+        order_history_cursor.execute(sql)
         return True
 
     def __write_to_order_history_db__(self, business_license_number: str, pos_number: int,
@@ -360,7 +373,8 @@ class DatabaseConnection(object):
 
         # TODO: fix this
         sql = f"{business_license_number}-{pos_number}-{date}"
-        self.__order_history_cursor__.execute(sql)
+        order_history_cursor = self.__order_history_database__.cursor()
+        order_history_cursor.execute(sql)
         return True
 
     def get_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
@@ -408,18 +422,34 @@ class DatabaseConnection(object):
         pass
 
     def get_fcm_tokens(self) -> dict:
-        """ Get fcm tokens from user database. """
+        """ Get fcm tokens from user/store database. """
         return {}
 
     def put_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
-        """ Put new fcm token to user database.
+        """ Put new fcm token to user/store database.
+            If token is already in database, just update the token's timestamp and return true.
         :param token: Firebase Cloud Messaging token.
         :param user_id: user id
         :param pos_number: pos number or None (if None, token will be registered to user db / if not none, to store db)
         :param flush: If true, flush the old(that have been registered for two days/months) token.
-        Ifsekjlsjelfkj
+        * When pos_number is None, then this method operates to user db.
+          Token that registered in user db need to be flushed after two months. (because of the token lifetime)
+          So, in the situation of <pos_number is None and flush is true>,
+          find expired(which is registered !!two months!! ago) tokens that registered in user db and delete them.
+        * When pos_number is not None, then this method operates to store db.
+          Token that registered in store db need to be flushed after two days. (not because of the token lifetime)
+            (just for smooth order sharing between "OrderAssistant"s;
+             This is possible because "OrderAssistant" is used every day, unlike client apps for customers.)
+          So, in the situation of <pos_number is not None and flush is true>,
+          find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
         """
         pass
+
+    def get_user_order_token(self) -> str:
+        """ Get user order token from store database.
+        :return: order token | if user's phone number is not registered, return None.
+        """
+        return ""
 
     def calculate_disk_usage(self) -> float:
         """ Calculate disk usage in MB.
@@ -427,6 +457,57 @@ class DatabaseConnection(object):
         """
         # TODO: fix this
         return 0.0
+
+
+class ExclusiveDatabase(object):
+    """ Database Connection class for datas that needed to be accessed exclusively. (lock/mutex-aware) """
+
+    def __init__(self, host, port, ssl_ca, user_name, password):
+        self.host = host
+        self.port = port
+        self.__ssl_ca__ = ssl_ca
+        self.__user_name__ = user_name
+        self.__password__ = password
+
+        self.__connection__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ssl_ca__,
+                                         user=self.__user_name__, password=self.__password__,
+                                         db="exclusiveDatabase", charset='utf8')
+        """ Database Schema : db_name - table_name - column_name
+        exclusiveDatabase {
+            registeredPhoneNumberList {
+                phoneNumber : VARCHAR(100) | phone number  # to prevent duplicate phone numbers from being registered
+                userId : VARCHAR(40) | user id - (40 : user id length limit)
+                dbIpAddress : VARCHAR(100) | store database ip address
+            }
+            registeredBusinessLicenseNumberList {
+                identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
+                                                                                   from being registered
+                                                                                 # one identifier can be registered
+                                                                                   by one user
+                userId : VARCHAR(40) | user id - (40 : user id length limit)
+                dbIpAddress : VARCHAR(100) | store database ip address
+            }
+        }"""
+
+    def __check_db_connection__(self):
+        """ Check if database connection is alive. And if not, reconnect. """
+        return self.__connection__.ping(reconnect=True)
+
+    def __set_mutex_lock__(self, *args, **kwargs):
+        """ Set exclusive lock on the database. """
+        pass
+
+    def __set_mutex_unlock__(self, *args, **kwargs):
+        """ Unlock the mutex. """
+        pass
+
+    def __write__(self, *args, **kwargs):
+        """ Write to database. """
+        pass
+
+    def __qurry__(self, *args, **kwargs):
+        """ Query from database. """
+        pass
 
 
 class CachableUnit(object):
@@ -464,7 +545,7 @@ class User(object):
 
     @classmethod
     def get_user_by_firebase_token(cls, firebase_token: str) -> User | None:
-        """ Get user by firebase user id and db ip.
+        """ Get user by firebase user id and db ip by firebase ID token.
             If the user has been disabled, an exception will be raised.
         """
         try:
@@ -484,10 +565,11 @@ class User(object):
                 return User(registered_phone_number_list[phone_number], host)
         return None  # there's no user with this phone number.
 
-    @classmethod
-    def sign_in_or_up(cls, firebase_phone_auth_token: str, sso_token: str, sso_provider: str) -> User:
-        """ Sign in or sign up.
+    @staticmethod
+    def sign_in_or_up(firebase_phone_auth_token: str, sso_token: str, sso_provider: str):
+        """ Sign in or sign up method for client app login.
         :raise ValueError: If the phone auth token is invalid.
+        :raise OSError: If database connection is lost.
         """
         # get phone number from firebase phone auth token
         try:
@@ -605,8 +687,55 @@ class Store(object):
     def get_store_list(firebase_token: str):
 
     @staticmethod
-    def sign_in_or_up(firebase_token: str, business_registration_number: str, pos_number: int) -> Store:
+    def sign_up(firebase_id_token: str, business_registration_number: str, pos_number: int):
         pass
+
+    @staticmethod
+    def sign_in_or_up(firebase_phone_auth_token: str, sso_token: str, sso_provider: str) -> User:
+        """ Sign in or sign up method for client app login.
+        :raise ValueError: If the phone auth token is invalid.
+        :raise OSError: If database connection is lost.
+        """
+        # get phone number from firebase phone auth token
+        try:
+            phone_auth = fcon.get_user_by_token(firebase_phone_auth_token)
+        except Exception:
+            raise ValueError("Invalid firebase phone auth token.")
+        phone_number = phone_auth.phone_number
+
+        # delete phone auth user
+        fcon.delete_user(phone_auth.uid)
+        del phone_auth
+
+        # check duplicated phone number
+
+
+        # get sso login user info
+        user_info = sso.get_user_by_token(sso_token, sso_provider)
+
+        # db load balancing
+        db = DatabaseConnection.load_balanced_get_instance()
+        if not db:
+            raise OSError("No database connection.")
+
+        # create or update firebase user
+        email = sso_provider + '_' + user_info['unique_id'] + '@' + db.host
+        password = sso_token
+        nickname = user_info['nickname']
+        profile_image = user_info['profile_image']
+        user_email = user_info['email']
+        gender = user_info['gender']
+        age = user_info['age']
+        if sso_provider == "naver":
+            legal_name = user_info['name']
+        try:
+            user = fcon.create_user(email=email, password=password, display_name=nickname, photo_url=profile_image)
+        except fcon.auth.EmailAlreadyExistsError:  # user already exists
+            user = fcon.get_user_by_firebase_email(email)
+            fcon.update_user(user.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
+
+        # create or update user in database
+        user = User(*email.split('@'))
 
     def __init__(self):
         self.business_license_number = None
@@ -645,4 +774,4 @@ class Store(object):
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
-        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, sfesfesflush)
+        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, self.pos_number, flush)

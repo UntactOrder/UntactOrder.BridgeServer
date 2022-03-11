@@ -5,8 +5,6 @@ Coded with Python 3.10 Grammar by purplepig4657
 Description : Firebase ADMIN SDK Connector for BridgeServer.
 Reference : [admin] https://firebase.google.com/docs/reference/admin/python/firebase_admin?hl=ko
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-from functools import lru_cache
-
 from firebase_admin import initialize_app, credentials, auth, messaging
 
 # Fetch the service account key JSON file contents
@@ -71,7 +69,6 @@ def revoke_user_tokens(user_id: str):
     auth.revoke_refresh_tokens(user_id)
 
 
-@lru_cache
 def get_user_by_token(token: str, app=None, check_revoked=False) -> auth.UserRecord:
     """
     Get User by Firebase ID Token.
