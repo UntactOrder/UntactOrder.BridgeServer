@@ -9,9 +9,9 @@ import time
 
 
 if __name__ == '__main__':
-    from src.main.api.database_helper import User, Store
+    from src.main.dataclass.data_unit import User, Store
 else:
-    from api.database_helper import User, Store
+    from dataclass.data_unit import User, Store
 
 
 def update_last_access_date(firebase_id_token: str) -> bool:
