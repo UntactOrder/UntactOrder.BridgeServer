@@ -72,8 +72,9 @@ class DatabaseConnection(object):
         """
         # exclusive database
         if exclusive_db:
-            cls.exclusive = ExclusiveDatabase(host=exclusive_db[0], port=exclusive_db[1], ssl_ca=cls.__ROOT_CA__,
-                                              user=exclusive_db[2], password=exclusive_db[3])
+            cls.exclusive = ExclusiveDatabaseConnection(host=exclusive_db[0], port=exclusive_db[1],
+                                                        user_name=exclusive_db[2], password=exclusive_db[3],
+                                                        ssl_ca=cls.__ROOT_CA__)
 
         for db_ip, port, user_name, password in db_list:
             cls.__db_server_list__[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
@@ -465,15 +466,15 @@ class DatabaseConnection(object):
         return 0.0
 
 
-class ExclusiveDatabase(object):
+class ExclusiveDatabaseConnection(object):
     """ Database Connection class for datas that needed to be accessed exclusively. (lock/mutex-aware) """
 
-    def __init__(self, host, port, ssl_ca, user_name, password):
+    def __init__(self, host, port, user_name, password, ssl_ca):
         self.host = host
         self.port = port
-        self.__ssl_ca__ = ssl_ca
         self.__user_name__ = user_name
         self.__password__ = password
+        self.__ssl_ca__ = ssl_ca
 
         self.__connection__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ssl_ca__,
                                          user=self.__user_name__, password=self.__password__,
