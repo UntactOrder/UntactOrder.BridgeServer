@@ -29,6 +29,9 @@ INS = "INSERT"
 UPD = "UPDATE"
 DEL = "DELETE"
 
+TRN_TB = "TRUNCATE TABLE"  # re-create table
+DRP_TB = "DROP TABLE"  # delete table
+
 FRM = "FROM"  # for SELECT
 ITO = "INTO"  # for INSERT
 SET = "SET"  # for UPDATE
@@ -53,6 +56,7 @@ class DatabaseConnection(object):
     # https://mariadb.com/kb/en/identifier-names/
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
+    MARIADB_VARCHAR_MAX = 65535  # byte
 
     # DB Constants
     #
@@ -217,7 +221,7 @@ class DatabaseConnection(object):
                 id : BIGINT PRIMARY KEY autoincrement | index
                 alterDateTime : VARCHAR(30) | 2022-01-01_12:00:00:000000
                 alterType : TINYINT | 1=update, 2=delete
-                alterLogMessage : VARCHAR(65535) | update or delete log message  # be careful of length
+                alterLogMessage : VARCHAR(MARIADB_VARCHAR_MAX) | update or delete log message  # be careful of length
             }
             kakao_unique_id-fcmToken {  # fcmTokenTable, firebase cloud messaging token
                                         # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
@@ -245,17 +249,18 @@ class DatabaseConnection(object):
                 ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
                 businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
                 publicIp : VARCHAR(100) | public ip address  # required
-                wifiPassword : VARCHAR(65535) | wifi password  # required
+                wifiPassword : VARCHAR(MARIADB_VARCHAR_MAX) | wifi password  # required
                 gatewayIp : VARCHAR(100) | gateway ip address  # required
                 gatewayMac : VARCHAR(200) | gateway mac address  # required
                 posIp : VARCHAR(100) | pos server ip address  # required
                 posMac : VARCHAR(200) | pos server mac address  # required
-                posPort : INT | pos port number # required
+                posPort : INT | pos port number  # required
                 --------------------------------------------------------------------------------
                 businessName : VARCHAR(100) | business name  # required
                 businessAddress : VARCHAR(1000) | business address  # required
-                businessDescription : VARCHAR(65535) | business description  # optional
+                businessDescription : VARCHAR(MARIADB_VARCHAR_MAX) | business description  # optional
                 businessPhoneNumber : VARCHAR(100) | business phone number  # required
+                businessProfileImage : VARCHAR(MARIADB_VARCHAR_MAX) | business profile image  # optional
                 businessEmail : VARCHAR(1000) | business email  # optional
                 businessWebsite : VARCHAR(10000) | business website  # optional
                 businessOpenTime : VARCHAR(10000) | business open time  # optional
@@ -268,10 +273,10 @@ class DatabaseConnection(object):
                 name : VARCHAR(100) | item name  # required
                 price : INT | item price  # required
                 type : VARCHAR(100) | item type  # required
-                photoUrl : VARCHAR(65535) | item photo url  # optional
-                description : VARCHAR(65535) | item description  # optional
-                ingredient : VARCHAR(65535) | item ingredient  # optional
-                hashtag : VARCHAR(65535) | item hashtag  # optional
+                photoUrl : VARCHAR(MARIADB_VARCHAR_MAX) | item photo url  # optional
+                description : VARCHAR(MARIADB_VARCHAR_MAX) | item description  # optional
+                ingredient : VARCHAR(MARIADB_VARCHAR_MAX) | item ingredient  # optional
+                hashtag : VARCHAR(MARIADB_VARCHAR_MAX) | item hashtag  # optional
                 pinned : BOOLEAN | whether to recommend or not.  # optional
                 available : BOOLEAN | whether item is deprecated  # required
             }
@@ -313,8 +318,7 @@ class DatabaseConnection(object):
                 menuPrice : INT | menu price
                 menuQuantity : INT | menu quantity
             }  # total price can be calculated by sum_by_rows(menuPrice*menuQuantity)
-        }
-        """
+        }"""
 
         self.connected = self.__check_db_connection()
 
@@ -353,7 +357,8 @@ class DatabaseConnection(object):
 
         sql = f"{SEL} * {FRM} {target_table}"
         if kwargs:
-            sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+            sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)])
+        sql += ';'
         return sql
 
     @staticmethod
@@ -374,9 +379,12 @@ class DatabaseConnection(object):
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])
             else:
-                sql = f"{DEL} {table}"
+                sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
             if kwargs:
-                sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+                sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)])
+            sql += ';'
+        elif query in (TRN_TB, DRP_TB):
+            sql = query + ' ' + table + ';'
         else:
             raise ValueError("Invalid query method.")
 
@@ -458,9 +466,11 @@ class DatabaseConnection(object):
         elif 'alterHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT, " \
-                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR(65535) {NNUL} {DFT} '', " \
-                  f"description VARCHAR(65535) {NNUL} {DFT} '', ingredient VARCHAR(65535) {NNUL} {DFT} '', " \
-                  f"hashtag VARCHAR(65535) {NNUL} {DFT} '', pinned BOOLEAN {NNUL} default 0, menuQuantity INT);"
+                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"hashtag VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"pinned BOOLEAN {NNUL} default 0, menuQuantity INT);"
         elif 'fcmToken' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
@@ -493,21 +503,23 @@ class DatabaseConnection(object):
         if 'storeInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"ISO4217 VARCHAR(3) {NNUL}, businessRegistrationNumber VARCHAR(27) {NNUL}, " \
-                  f"publicIp VARCHAR(100) {NNUL}, wifiPassword VARCHAR(65535) {NNUL}, " \
+                  f"publicIp VARCHAR(100) {NNUL}, wifiPassword VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL}, " \
                   f"gatewayIp VARCHAR(100) {NNUL}, gatewayMac VARCHAR(200) {NNUL}, " \
                   f"posIp VARCHAR(100) {NNUL}, posMac VARCHAR(200) {NNUL}, posPort INT {NNUL}" \
                   f"businessName VARCHAR(100) {NNUL} {DFT} '', businessAddress VARCHAR(1000) {NNUL} {DFT} '', " \
-                  f"businessDescription VARCHAR(65535) {NNUL} {DFT} ''," \
-                  f" businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
+                  f"businessDescription VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
+                  f"businessProfileImage VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"businessEmail VARCHAR(1000) {NNUL} {DFT} '', businessWebsite VARCHAR(10000) {NNUL} {DFT} '', " \
                   f"businessOpenTime VARCHAR(10000) {NNUL} {DFT} '', businessCloseTime VARCHAR(10000) {NNUL} {DFT} ''" \
                   f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
         elif 'items' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT {NNUL}, " \
-                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR(65535) {NNUL} {DFT} '', " \
-                  f"description VARCHAR(65535) {NNUL} {DFT} '', ingredient VARCHAR(65535) {NNUL} {DFT} '', " \
-                  f"hashtag VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"hashtag VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"pinned BOOLEAN {NNUL} {DFT} 0, available  BOOLEAN {NNUL} {DFT} 1);"
         elif 'tableAlias' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
