@@ -14,6 +14,26 @@ import string
 from pymysql import Connection
 
 
+# -----------------------------------------------------------------------------
+# Database Query Language
+SHW_DBS = "SHOW DATABASES"
+SHW_TBS = "SHOW TABLES"
+SHW_TB_STAT = "SHOW TABLE STATUS"
+CRE_TB = "CREATE TABLE"
+
+SEL = "SELECT"
+INS = "INSERT"
+UPD = "UPDATE"
+DEL = "DELETE"
+
+FRM = "FROM"  # for SELECT
+ITO = "INTO"  # for INSERT
+SET = "SET"  # for UPDATE
+WHR = "WHERE"
+VAL = "VALUES"
+# -----------------------------------------------------------------------------
+
+
 class DatabaseConnection(object):
     """ Database Connection Class for BridgeServer """
 
@@ -30,6 +50,9 @@ class DatabaseConnection(object):
     # https://mariadb.com/kb/en/identifier-names/
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
+
+    # exclusive database
+    exclusive = None
 
     @classmethod
     def get_instance(cls, db_ip=None) -> dict[str: DatabaseConnection] | DatabaseConnection | None:
@@ -143,6 +166,13 @@ class DatabaseConnection(object):
                                                              the user should be notified of the fact
                                                              that user info is scheduled to be deleted.
             }
+            kakao_unique_id-alterHis {  # userDatabaseAlterHistoryTable
+                                        # only record database user info update and delete (except last access date)
+                id : BIGINT PRIMARY KEY autoincrement | index
+                alterDateTime : VARCHAR(30) | 2022-01-01_12:00:00:000000
+                alterType : TINYINT | 1=update, 2=delete
+                alterLogMessage : VARCHAR(65535) | update or delete log message  # be careful of length
+            }
             kakao_unique_id-fcmToken {  # fcmTokenTable, firebase cloud messaging token
                                         # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
                 timeStamp : VARCHAR(30) | 2020-01-01
@@ -156,13 +186,6 @@ class DatabaseConnection(object):
                 historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
                                         | business_regi_number-pos_number-table_number-20220101_120000000000-ISO4217
             }
-            kakao_unique_id-alterHis {  # userDatabaseAlterHistoryTable
-                                       # only record database update and delete, not add 
-                id : BIGINT PRIMARY KEY autoincrement | index
-                alterDateTime : VARCHAR(30) | 2022-01-01_12:00:00:000000
-                alterType : TINYINT | 1=update, 2=delete
-                alterLogMessage : VARCHAR(65535) | update or delete log message  # be careful of length
-            }
         }"""
         """
         storeDatabase {
@@ -172,7 +195,7 @@ class DatabaseConnection(object):
                                                            ::: len("kakao_0000000000") == 16
                                                            ::: len("naver_00000000") == 14
                                                     # # 3 : pos number length limit (0 ~ 999)
-                                                    # # 8 : table name length limit
+                                                    # # 9 : table name length limit
                 ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
                 businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
                 publicIp : VARCHAR(100) | public ip address  # required
@@ -218,10 +241,11 @@ class DatabaseConnection(object):
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
                 id : INT PRIMARY KEY autoincrement | index
                 orderToken : VARCHAR(128) | user order token for pos_number
-                userEmail : VARCHAR(200) | customer id + db ip  # one customer can have only one token per pos one time.
+                userEmail : VARCHAR(141) | customer id + db ip  # one customer can have only one token per pos one time.
                                                                 # token will be deleted after order is completed.
                                                                 # To prevent errors, tokens should not expire
                                                                   or be deleted before the order is completed.
+                tableNumber : INT | table number
             }
         }"""
         """
@@ -272,8 +296,8 @@ class DatabaseConnection(object):
             self.connected = False
             return self.connected
 
-    def __query_from_user_db__(self, **kwargs) -> dict:
-        """ Query user info from user database. """
+    def __read_from_user_db__(self, **kwargs) -> dict:
+        """ Read user info from user database. """
 
         # TODO: fix this
         if 'business_license_number' in kwargs:
@@ -291,8 +315,8 @@ class DatabaseConnection(object):
         result = store_cursor.fetchall()
         return result
 
-    def __query_from_store_db__(self, **kwargs) -> dict:
-        """ Query store info from store database. """
+    def __read_from_store_db__(self, **kwargs) -> dict:
+        """ Read store info from store database. """
 
         # TODO: fix this
         if 'business_license_number' in kwargs:
@@ -310,9 +334,9 @@ class DatabaseConnection(object):
         result = self.store_cursor.fetchall()
         return result
 
-    def __query_from_order_history_db__(self, business_license_number: str, pos_number: int,
-                                        date: str, start_index=None) -> dict:
-        """ Query order history from order history database. """
+    def __read_from_order_history_db__(self, business_license_number: str, pos_number: int,
+                                       date: str, start_index=None) -> dict:
+        """ Read order history from order history database. """
 
         # TODO: fix this
         if start_index is None:
@@ -372,8 +396,8 @@ class DatabaseConnection(object):
         order_history_cursor.execute(sql)
         return True
 
-    def get_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
-        """ Get order history from order history database. """
+    def acquire_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
+        """ Acquire order history from order history database. """
 
         # TODO: fix this
         if date is None:
@@ -391,8 +415,8 @@ class DatabaseConnection(object):
             result[date] = self.__query_from_order_history_db__(business_license, pos_number, date, start_index)
         return result
 
-    def put_order_history(self, user_id: str, pos_number: int, date: str, order_history: dict) -> bool:
-        """ Put order history to order history database. """
+    def register_order_history(self, user_id: str, pos_number: int, date: str, order_history: dict) -> bool:
+        """ Register order history to order history database. """
 
         # TODO: fix this
         result = self.__write_to_order_history_db__(business_license, pos_number, date, order_history)
@@ -400,29 +424,21 @@ class DatabaseConnection(object):
             self.__order_history_database__.commit()
         return result
 
-    def get_registered_phone_number_list(self) -> dict:
-        """ Get registered phone number list from user database. """
-        return {}
-
-    def put_registered_phone_number_list(self) -> bool:
-        """ Put registered phone number list to user database. """
-        return False
-
-    def get_last_access_date(self) -> str:
-        """ Get last access date from user database. """
+    def acquire_last_access_date(self) -> str:
+        """ Acquire last access date from user database. """
         return ""
 
-    def put_updated_last_access_date(self, user_id: str, date: str) -> bool:
-        """ Put updated last access date to user database. """
+    def register_updated_last_access_date(self, user_id: str, date: str) -> bool:
+        """ Register updated last access date to user database. """
         pass
 
-    def get_fcm_tokens(self) -> dict:
-        """ Get fcm tokens from user/store database. """
+    def acquire_fcm_tokens(self) -> dict:
+        """ Acquire fcm tokens from user/store database. """
         return {}
 
-    def put_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
-        """ Put new fcm token to user/store database.
-            If token is already in database, just update the token's timestamp and return true.
+    def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
+        """ Register new fcm token to user/store database.
+            If token is already in database, just return true.
         :param token: Firebase Cloud Messaging token.
         :param user_id: user id
         :param pos_number: pos number or None (if None, token will be registered to user db / if not none, to store db)
@@ -438,10 +454,14 @@ class DatabaseConnection(object):
           So, in the situation of <pos_number is not None and flush is true>,
           find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
         """
+        if flush:
+            # TODO: flush all expired tokens
+            pass
+        # TODO: put new token
         pass
 
-    def get_user_order_token(self) -> str:
-        """ Get user order token from store database.
+    def acquire_user_order_token(self) -> str:
+        """ Acquire user order token from store database.
         :return: order token | if user's phone number is not registered, return None.
         """
         return ""
@@ -484,23 +504,125 @@ class ExclusiveDatabaseConnection(object):
             }
         }"""
 
+        sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (" \
+              f"phoneNumber VARCHAR(100) NOT NULL, userId VARCHAR(40) NOT NULL, dbIpAddress VARCHAR(100) NOT NULL);"
+        self.__connection__.cursor().execute(sql)
+        sql = f"{CRE_TB} IF NOT EXISTS registeredBusinessLicenseNumberList (" \
+              f"identifier VARCHAR(31) NOT NULL, userId VARCHAR(40) NOT NULL, dbIpAddress VARCHAR(100) NOT NULL);"
+        self.__connection__.cursor().execute(sql)
+        self.__connection__.commit()
+
     def __check_db_connection__(self):
         """ Check if database connection is alive. And if not, reconnect. """
         return self.__connection__.ping(reconnect=True)
 
     def __set_mutex_lock__(self, *args, **kwargs):
-        """ Set exclusive lock on the database. """
+        """ Set exclusive lock on the database.
+        :return: True if success, False if failed.
+        """
         pass
 
     def __set_mutex_unlock__(self, *args, **kwargs):
         """ Unlock the mutex. """
         pass
 
-    def __write__(self, *args, **kwargs):
-        """ Write to database. """
+    def __check_mutex_status__(self, *args, **kwargs):
+        """ Check the mutex status.
+        :return: True if locked | False if unlocked
+        """
         pass
 
-    def __qurry__(self, *args, **kwargs):
-        """ Query from database. """
-        pass
+    def __write__(self, query, table, column, **kwargs):
+        """ Write to database.
+        :param query: query method
+        :param table: table name
+        :param column: column name | list or str
+        """
+        target_table = table
 
+        if query == INS:
+            sql = f"{INS} {ITO} {target_table} (" + ", ".join(kwargs) + f") {VAL} (" + ", ".join(kwargs.values()) + ");"
+        elif query in (UPD, DEL):
+            target_col = column if column is list else [column]
+            target_val = [kwargs.pop(col) for col in target_col]
+            if query == UPD:
+                sql = f"{UPD} {target_table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])\
+                      + f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+            else:
+                sql = f"{DEL} {target_table} {WHR} "\
+                      + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+        else:
+            raise ValueError("Invalid query method.")
+
+        cur = self.__connection__.cursor()
+        cur.execute(sql)
+        cur.close()
+        self.__connection__.commit()
+
+    def __read__(self, table, column, **kwargs):
+        """ Read from database.
+        :param table: table name
+        :param column: column name | list or str
+        """
+        target_table = table
+        target_col = column if column is list else [column]
+        target_val = [kwargs.pop(col) for col in target_col]
+
+        sql = f"{SEL} * {FRM} {target_table} {WHR} "\
+              + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+        cur = self.__connection__.cursor()
+        cur.execute(sql)
+        result = cur.fetchall()
+        cur.close()
+        if len(result) == 0:
+            return None
+        return result
+
+    def register_phone_number(self, phone: str, new_user_id: str, new_dp_ip: str) -> None | tuple:
+        """ Register phone number.
+        If there is no duplicate phone number, just register the phone number.
+        If there is a duplicate phone number, overwrite the original value to new value
+                                              and return the original user value.
+        :return: None if there's no duplicate key | (user_id, db_ip_address) if there's duplicate key
+        :raise OSError: if database connection is not alive.
+        """
+        if self.__check_db_connection__():
+            raise OSError("Database connection is not alive.")
+        while self.__check_mutex_status__():
+            pass  # TODO: check if sleep is needed.
+        while not self.__set_mutex_lock__():
+            pass
+        original = self.__read__(table='registeredPhoneNumberList', column='phoneNumber', phoneNumber=phone)[0]
+        if original is None or original[1] != new_user_id:
+            query = INS if original is None else UPD
+            self.__write__(query=query, table='registeredPhoneNumberList', column='phoneNumber',
+                           phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
+        self.__set_mutex_unlock__()
+        if not original and original[1] != new_user_id:
+            return original[1], original[2]
+
+    def register_business_number(self, iso4217: str, business_registration_number: str,
+                                 user_id: str, dp_ip: str) -> bool:
+        """ Register business number.
+        If there is no duplicate phone number, just register the phone number.
+        If there is a duplicate phone number, do nothing and return False.
+        :return: True if there's no duplicate key | False if there's duplicate key
+        :raise OSError: if database connection is not alive.
+        """
+        if self.__check_db_connection__():
+            raise OSError("Database connection is not alive.")
+        identifier = iso4217 + '-' + business_registration_number
+        while self.__check_mutex_status__():
+            pass
+        while not self.__set_mutex_lock__():
+            pass
+        original = self.__read__(table='registeredBusinessLicenseNumberList', column='identifier',
+                                 identifier=identifier)
+        if original is None:
+            self.__write__(query=INS, table='registeredBusinessLicenseNumberList', column='identifier',
+                           identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
+        #                                                                             # in the order of the db column.
+        self.__set_mutex_unlock__()
+        if original:
+            return False
+        return True

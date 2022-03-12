@@ -7,6 +7,7 @@ Reference : [caching] https://stackoverflow.com/questions/50866911/caching-in-me
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from __future__ import annotations
 
+from threading import Timer
 from random import choice
 import string
 
@@ -97,19 +98,26 @@ class User(object):
         fcon.delete_user(phone_auth.uid)
         del phone_auth
 
-        # check duplicated phone number
-
-
         # get sso login user info
         user_info = sso.get_user_by_token(sso_token, sso_provider)
+        user_id = sso_provider + '_' + user_info['unique_id']
 
         # db load balancing
         db = DatabaseConnection.load_balanced_get_instance()
         if not db:
             raise OSError("No database connection.")
 
+        # check duplicated phone number
+        original = DatabaseConnection.exclusive.register_phone_number(phone_number, user_id, db.host)
+        if original:  # duplicated phone number exists
+            original_user_email = original[0] + '@' + original[1]
+            original_fuser = fcon.get_user_by_firebase_email(original_user_email)
+            if original_fuser:  # disable original user
+                fcon.update_user(original_fuser.uid, disabled=True)
+                fcon.revoke_user_tokens(original_fuser.uid)
+
         # create or update firebase user
-        email = sso_provider + '_' + user_info['unique_id'] + '@' + db.host
+        email = user_id + '@' + db.host
         password = sso_token
         nickname = user_info['nickname']
         profile_image = user_info['profile_image']
@@ -125,8 +133,8 @@ class User(object):
             fcon.update_user(user.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
 
         # create or update user in database
-        user = User(*email.split('@'))
-
+        user = User(user_id, db.host)
+        user.update_user_info(user_email, nickname, ?
 
         # reserve password reset - 10 minutes later
         def gen_random_password():
@@ -165,19 +173,41 @@ class User(object):
     @property
     def
 
+    def update_user_info(self, legal_name: str = None, email: str = None, phone_number: str = None,
+                         age: int = None, gender: int = None, silent: bool = False):
+        """ Update user info
+        If silent is true, this method will not update last access date.
+        If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
+        """
+        kwargs = {}
+        if legal_name is not None:
+            kwargs['legalName'] = legal_name if legal_name else ""
+        if email is not None:
+            kwargs['email'] = email if email else ""
+        if phone_number is not None:
+            kwargs['phone'] = phone_number if phone_number else ""
+        if age is not None:
+            kwargs['age'] = age if age else 0
+        if gender is not None:
+            kwargs['gender'] = gender if gender else 0
+
+
     def set_new_order_history(self, business_name: str, total_price: int, ):
+        pass
+
+    def get_order_history(self, business_name: str, ):
         pass
 
     def set_updated_last_access_date(self, date: str):
         """ Put updated last access date to user database. """
-        self.db_connection.put_updated_last_access_date(self.user_id, date)
+        self.db_connection.register_updated_last_access_date(self.user_id, date)
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
         """ Put new fcm token to user database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two month) token.
         """
-        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, flush)
+        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, flush)
 
 
 
@@ -209,6 +239,7 @@ class Store(object):
     def sign_in_or_up(firebase_phone_auth_token: str, sso_token: str, sso_provider: str) -> User:
         """ Sign in or sign up method for client app login.
         :raise ValueError: If the phone auth token is invalid.
+        :raise ValueError: if monetary_unit_code is not valid
         :raise OSError: If database connection is lost.
         """
         # get phone number from firebase phone auth token
@@ -222,6 +253,7 @@ class Store(object):
         fcon.delete_user(phone_auth.uid)
         del phone_auth
 
+        Currency(monetary_unit_code)  # check if the code is valid  ex: KRW, USD, JPY, EUR, GBP
         # check duplicated phone number
 
 
@@ -275,18 +307,9 @@ class Store(object):
         """ Set new order history. """
         pass
 
-    def set_monetary_unit_code(self, monetary_unit_code: str):
-        """ Set monetary unit code
-        :param monetary_unit_code: str - ex: KRW, USD, JPY, EUR, GBP
-        :raise ValueError: if monetary_unit_code is not valid
-        """
-        Currency(monetary_unit_code)  # check if the code is valid
-
-        pass
-
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
         """ Put new fcm token to store database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
-        self.db_connection.put_new_firebase_token(fcm_token, self.user_id, self.pos_number, flush)
+        self.db_connection.put_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)

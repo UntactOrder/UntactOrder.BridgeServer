@@ -21,8 +21,8 @@ from network import application as ap
 # load db list
 with open(DB_LIST_FILE, 'r') as db_list_file:
     from api.database_helper import DatabaseConnection
-    db_list = [line.split(',') for line in db_list_file.read().splitlines()]
-    DatabaseConnection.load_db_server(db_list)
+    db_list = [line.split(',') for line in db_list_file.read().splitlines() if line]
+    DatabaseConnection.load_db_server(tuple(db_list[0]), db_list[1:])
     del db_list
 
 
@@ -38,7 +38,6 @@ def create_app():
     def server_inspection_time_noticer(func):
         def notice_service_denial(*args, **kwargs):
             if service_denial_start <= datetime.now().time() <= service_denial_end:
-                print("Server Inspection Time")
                 return make_response(service_denial_msg, 503)
             else:
                 return func(*args, **kwargs)

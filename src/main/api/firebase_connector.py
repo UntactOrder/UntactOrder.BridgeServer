@@ -112,7 +112,7 @@ def get_user_by_phone_number(phone_number: str, app=None) -> auth.UserRecord:
     return auth.get_user_by_phone_number(phone_number, app=app)
 
 
-def get_user_by_firebase_email(email, app=None) -> auth.UserRecord:
+def get_user_by_firebase_email(email, app=None) -> auth.UserRecord | None:
     """
     Get User by Email.
     :param email: User's Email.
@@ -120,7 +120,10 @@ def get_user_by_firebase_email(email, app=None) -> auth.UserRecord:
     :return: User Record.
     :reference: https://firebase.google.com/docs/auth/admin/manage-users?hl=ko
     """
-    return auth.get_user_by_email(email, app=app)
+    try:
+        return auth.get_user_by_email(email, app=app)
+    except auth.UserNotFoundError:  # If no user exists for the specified email address.
+        return None
 
 
 def get_users(identifiers: list | None = None, app=None, uid=None, email=None, phone=None, provider=None) -> list:
