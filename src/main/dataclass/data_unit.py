@@ -119,50 +119,95 @@ class User(object):
         # create or update firebase user
         email = user_id + '@' + db.host
         password = sso_token
-        nickname = user_info['nickname']
-        profile_image = user_info['profile_image']
-        user_email = user_info['email']
-        gender = user_info['gender']
-        age = user_info['age']
-        if sso_provider == "naver":
-            legal_name = user_info['name']
+        nickname = user_info['nickname']  # required
+        profile_image = user_info['profile_image']  # required
+        user_email = user_info['email']  # optional
+        gender = user_info['gender']  # optional
+        age = user_info['age']  # optional
+        legal_name = user_info.get('name', None)  # optional
+
+        is_new_user = True
         try:
-            user = fcon.create_user(email=email, password=password, display_name=nickname, photo_url=profile_image)
+            fuser = fcon.create_user(email=email, password=password, display_name=nickname, photo_url=profile_image)
         except fcon.auth.EmailAlreadyExistsError:  # user already exists
-            user = fcon.get_user_by_firebase_email(email)
-            fcon.update_user(user.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
+            is_new_user = False
+            fuser = fcon.get_user_by_firebase_email(email)
+            fcon.update_user(fuser.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
 
-        # create or update user in database
-        user = User(user_id, db.host)
-        user.update_user_info(user_email, nickname, ?
-
-        # reserve password reset - 10 minutes later
+        # define password generator
         def gen_random_password():
             __LENGTH__ = 28
             pool = string.ascii_letters + string.digits + string.punctuation
             return "".join([choice(pool) for l in range(__LENGTH__)])
 
-        Timer(60*10, lambda: fcon.update_user(user.uid, password=gen_random_password())).start()
+        # create or update user in database
+        user = User(user_id, db.host)
+        try:
+            if not user.update_user_info(legal_name, user_email, phone_number, age, gender, False, is_new_user):
+                raise OSError("Database error: User creation failed.")
+        except Exception as e:
+            if is_new_user:
+                fcon.delete_user(fuser.uid)
+            else:
+                fcon.update_user(fuser.uid, password=gen_random_password())
+            raise e
+
+        # reserve password reset - 10 minutes later
+        Timer(60*10, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
         # Because of this timer, we have to shut down the Nginx reverse proxy server first
         # # before the database server & backend server shutting down.
         # By this way, new login requests will not come in.
         # And after 10 minutes, the rest of the server can be shut down.
 
     def __init__(self, user_id: str, db_ip: str):
-        self.user_id = user_id  # kakao/naver + _unique_id
-        self.db_server = db_ip  # database server ip
-        self.email = self.user_id + '@' + self.db_server
-
-        self.legal_name = None
-        self.phone_number = None
-        self.user_email = None
-        self.age = None
-        self.gender = None
-        self.last_access_date = None
+        self.user_id: str = user_id  # kakao/naver + _unique_id
+        self.db_server: str = db_ip  # database server ip
 
     @cached_property
     def db_connection(self):
         return DatabaseConnection.get_instance(self.db_server)
+
+    @cached_property
+    def email(self) -> str:
+        return self.user_id + '@' + self.db_server
+
+    def get_user_info(self) -> tuple:
+        """ Get user info from database. """
+        return self.db_connection.acquire_user_info(self.user_id)[0]
+
+    @cached_property
+    def legal_name(self) -> str:
+        return self.db_connection.acquire_user_info(self.user_id, legal_name=True)[0][0]
+
+    @property
+    def phone_number(self) -> str:
+        return self.db_connection.acquire_user_info(self.user_id, phone=True)[0][0]
+
+    @cached_property
+    def user_email(self) -> str:
+        return self.db_connection.acquire_user_info(self.user_id, email=True)[0][0]
+
+    @cached_property
+    def age(self) -> int:
+        return self.db_connection.acquire_user_info(self.user_id, age=True)[0][0]
+
+    @cached_property
+    def gender(self) -> int:
+        return self.db_connection.acquire_user_info(self.user_id, gender=True)[0][0]
+
+    @cached_property
+    def last_access_date(self) -> str:
+        return self.db_connection.acquire_user_info(self.user_id, last_access_date=True)[0][0]
+
+    def update_user_info(self, legal_name: str = None, email: str = None, phone_number: str = None,
+                         age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
+        """ Update user info
+        If silent is true, this method will not update last access date.
+        If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
+        If init is true, this method will initialize user database.
+        """
+        return self.db_connection.update_user_info(self.user_id,
+                                                   legal_name, email, phone_number, age, gender, silent, init)
 
     @cached_property
     def fcm_token(self) -> list:
@@ -170,26 +215,17 @@ class User(object):
         tokens = []
         return tokens
 
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+        """ Put new fcm token to user database.
+        :param fcm_token: Firebase Cloud Messaging token.
+        :param flush: If true, flush the old(that have been registered for two month) token.
+        """
+        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, flush)
+
     @property
     def
 
-    def update_user_info(self, legal_name: str = None, email: str = None, phone_number: str = None,
-                         age: int = None, gender: int = None, silent: bool = False):
-        """ Update user info
-        If silent is true, this method will not update last access date.
-        If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
-        """
-        kwargs = {}
-        if legal_name is not None:
-            kwargs['legalName'] = legal_name if legal_name else ""
-        if email is not None:
-            kwargs['email'] = email if email else ""
-        if phone_number is not None:
-            kwargs['phone'] = phone_number if phone_number else ""
-        if age is not None:
-            kwargs['age'] = age if age else 0
-        if gender is not None:
-            kwargs['gender'] = gender if gender else DatabaseConnection.USR.GENDER.none
+
 
 
     def set_new_order_history(self, business_name: str, total_price: int, ):
@@ -198,16 +234,7 @@ class User(object):
     def get_order_history(self, business_name: str, ):
         pass
 
-    def set_updated_last_access_date(self, date: str):
-        """ Put updated last access date to user database. """
-        self.db_connection.register_updated_last_access_date(self.user_id, date)
-
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
-        """ Put new fcm token to user database.
-        :param fcm_token: Firebase Cloud Messaging token.
-        :param flush: If true, flush the old(that have been registered for two month) token.
-        """
-        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, flush)
+    def get_detailed_order_history(self, business_)
 
 
 

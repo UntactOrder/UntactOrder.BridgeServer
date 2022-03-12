@@ -5,9 +5,6 @@ Coded with Python 3.10 Grammar by IRACK000
 Description : OSI Network(7) Layer functions. These functions will be used by app.py.
 Reference : ??
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-import time
-
-
 if __name__ == '__main__':
     from src.main.dataclass.data_unit import User, Store
 else:
@@ -23,7 +20,7 @@ def update_last_access_date(firebase_id_token: str) -> bool:
     user = User.get_user_by_firebase_token(firebase_id_token)
     if user is None:
         return False
-    user.set_updated_last_access_date(time.strftime("%Y-%m-%d"))
+    user.update_user_info()
     return True
 
 

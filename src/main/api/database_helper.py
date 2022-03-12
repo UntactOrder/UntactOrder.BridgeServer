@@ -8,6 +8,8 @@ Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.h
 from __future__ import annotations
 
 from threading import Timer
+from datetime import datetime
+now = datetime.now
 from random import choice
 import string
 
@@ -37,12 +39,22 @@ ITO = "INTO"  # for INSERT
 SET = "SET"  # for UPDATE
 WHR = "WHERE"
 VAL = "VALUES"
+
+IS = "="
+NOT = "<>"
+GT = ">"
+LT = "<"
+GTE = ">="
+LTE = "<="
+
+AL = "*"
+
+__V = lambda value: f"{value}" if value is int else f"'{value}'"
 # -----------------------------------------------------------------------------
 
 
 class DatabaseConnection(object):
     """ Database Connection Class for BridgeServer """
-
     __db_server_list: dict[str: DatabaseConnection] = {}  # database server instance list
 
     if __name__ == '__main__':
@@ -345,43 +357,78 @@ class DatabaseConnection(object):
             self.connected = False
             return self.connected
 
+    def calculate_disk_usage(self) -> float:
+        """ Calculate disk usage in MB.
+        :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
+        """
+        # TODO: fix this
+        return 0.0
+
+    def search_table_by_name_format(self, db, table_format) -> tuple | None:
+        """ Search table by name format.
+        :return: table name list
+        """
+        if not self.__check_db_connection():
+            raise OSError("Database connection is not alive.")
+
+        sql = f"{SEL} {AL} {FRM} information_schema.TABLE_CONSTRAINTS {WHR} TABLE_NAME LIKE '%{table_format}%'"
+        cur = db.cursor()
+        cur.execute(sql)
+        result = cur.fetchall()
+        if not result:
+            return None
+        return result
+
     @staticmethod
-    def __make_read_query__(table, column, **kwargs):
+    def __make_read_query__(table, column_condition, **kwargs):
         """ Read from database.
         :param table: table name
-        :param column: column name | list or str
+        :param column_condition: column name | list or str
+        :param kwargs: column value | list or str
+                       operator - where operator | str
         """
+        global __V
+        opr = kwargs.pop('operator', IS)
+
         target_table = table
-        target_col = column if column is list else [column]
+        target_col = column_condition if column_condition is list else [column_condition]
         target_val = [kwargs.pop(col) for col in target_col]
 
-        sql = f"{SEL} * {FRM} {target_table}"
-        if kwargs:
-            sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)])
+        query_target = kwargs.pop('target', AL)
+        if query_target is list:
+            query_target = ", ".join(query_target)
+
+        sql = f"{SEL} {query_target} {FRM} {target_table}"
+        if target_val:
+            sql += f" {WHR} " + " AND ".join([f"{col}{opr}{__V(val)}" for col, val in zip(target_col, target_val)])
         sql += ';'
         return sql
 
     @staticmethod
-    def __make_write_query__(query, table, column, **kwargs):
+    def __make_write_query__(query, table, column_condition, **kwargs):
         """ Make write query sentence.
         :param query: query method
         :param table: table name
-        :param column: column name | list or str
+        :param column_condition: column name | list or str
         :param kwargs: column value | list or str
+                       operator - where operator | str
         """
+        global __V
+        opr = kwargs.pop('operator', IS)
+
         if query == INS:
             kwargs = {key: [val] if val is not list else val for key, val in kwargs.items()}
             values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
             sql = f"{INS} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ");"
         elif query in (UPD, DEL):
-            target_col = column if column is list else [column]
+            target_col = column_condition if column_condition is list else [column_condition]
             target_val = [kwargs.pop(col) for col in target_col]
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])
             else:
                 sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
-            if kwargs:
-                sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)])
+            if target_val:
+                sql += f" {WHR} " + " AND ".join([f"{col}{opr}{__V(val)}" for col, val in zip(target_col, target_val)])
             sql += ';'
         elif query in (TRN_TB, DRP_TB):
             sql = query + ' ' + table + ';'
@@ -390,74 +437,56 @@ class DatabaseConnection(object):
 
         return sql
 
-    def __read_from_user_db(self, table, column, **kwargs) -> dict:
+    def __read(self, db, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
+        if not self.__check_db_connection():
+            raise OSError("Database connection is not alive.")
+
+        if column_condition is None:
+            column_condition = []
+
+        sql = self.__make_read_query__(table, column_condition, **kwargs)
+        cur = db.cursor()
+        cur.execute(sql)
+        result = cur.fetchall()
+        cur.close()
+        if len(result) == 0:
+            return None
+        return result
+
+    def __read_from_user_db(self, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
         """ Read user info from user database. """
+        return self.__read(self.__user_database, table, column_condition, **kwargs)
 
-        # TODO: fix this
-        if 'business_license_number' in kwargs:
-            pass
-        if 'pos_number' in kwargs:
-            pass
-        if 'date' in kwargs:
-            pass
-        if 'start_index' in kwargs:
-            pass
-
-        sql = "SELECT * FROM store_info"
-        self.store_cursor = self.__store_database.cursor()
-        store_cursor.execute(sql)
-        result = store_cursor.fetchall()
-        return result
-
-    def __read_from_store_db(self, **kwargs) -> dict:
+    def __read_from_store_db(self, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
         """ Read store info from store database. """
+        return self.__read(self.__store_database, table, column_condition, **kwargs)
 
-        # TODO: fix this
-        if 'business_license_number' in kwargs:
-            pass
-        if 'pos_number' in kwargs:
-            pass
-        if 'date' in kwargs:
-            pass
-        if 'start_index' in kwargs:
-            pass
-
-        sql = "SELECT * FROM store_info"
-        store_cursor = self.__store_database.cursor()
-        store_cursor.execute(sql)
-        result = self.store_cursor.fetchall()
-        return result
-
-    def __read_from_order_history_db(self, business_license_number: str, pos_number: int,
-                                     date: str, start_index=None) -> dict:
+    def __read_from_order_history_db(self, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
         """ Read order history from order history database. """
-        if start_index is None:
-            start_index = 0
+        return self.__read(self.__order_history_database, table, column_condition, **kwargs)
 
-        sql = f"{business_license_number}-{pos_number}-{date}"
-        order_history_cursor = self.__order_history_database.cursor()
-        order_history_cursor.execute(f"SELECT * FROM {sql}")
-        result = order_history_cursor.fetchall()
-        return result
-
-        cur = self.__connection__.cursor()
-    cur.execute(sql)
-    result = cur.fetchall()
-    cur.close()
-    if len(result) == 0:
-        return None
-    return result
-
-    def __write_to_user_db(self, query, table, column, **kwargs) -> bool:
-        """ Write user info to user database. Do not commit in this function. """
-
+    def __write(self, db, table_inf, query, table, column_condition=None, **kwargs) -> bool:
         if not self.__check_db_connection():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_user_db(query, table, column, **kwargs))
+            self.set_delayed_work(lambda: self.__write_to_user_db(query, table, column_condition, **kwargs))
             return False
 
-        cur = self.__user_database.cursor()
+        if column_condition is None:
+            column_condition = []
+
+        cur = db.cursor()
 
         # make table
+        cur.execute(table_inf)
+
+        # do the work
+        sql = self.__make_write_query__(query, table, column_condition, **kwargs)
+        cur.execute(sql)
+
+        cur.close()
+        return True
+
+    def __write_to_user_db(self, query, table, column_condition=None, **kwargs) -> bool:
+        """ Write user info to user database. Do not commit in this function. """
         if 'userInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"legalName VARCHAR(100) {NNUL} {DFT} '', email : VARCHAR(200) {NNUL} {DFT} '', " \
@@ -481,25 +510,10 @@ class DatabaseConnection(object):
                   f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
-        cur.execute(sql)
+        return self.__write(self.__user_database, sql, query, table, column_condition, **kwargs)
 
-        # do the work
-        sql = self.__make_write_query__(query, table, column, **kwargs)
-        cur.execute(sql)
-
-        cur.close()
-        return True
-
-    def __write_to_store_db(self, query, table, column, **kwargs) -> bool:
+    def __write_to_store_db(self, query, table, column_condition=None, **kwargs) -> bool:
         """ Write store info to store database. Do not commit in this function. """
-
-        if not self.__check_db_connection():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_store_db(query, table, column, **kwargs))
-            return False
-
-        cur = self.__store_database.cursor()
-
-        # make table
         if 'storeInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"ISO4217 VARCHAR(3) {NNUL}, businessRegistrationNumber VARCHAR(27) {NNUL}, " \
@@ -532,41 +546,157 @@ class DatabaseConnection(object):
                   f"orderToken VARCHAR(128) {NNUL}, userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
-        cur.execute(sql)
+        return self.__write(self.__store_database, sql, query, table, column_condition, **kwargs)
 
-        # do the work
-        sql = self.__make_write_query__(query, table, column, **kwargs)
-        cur.execute(sql)
-
-        cur.close()
-        return True
-
-    def __write_to_order_history_db(self, query, table, column, **kwargs) -> bool:
+    def __write_to_order_history_db(self, query, table, column_condition=None, **kwargs) -> bool:
         """ Write order history to order history database. Do not commit in this function. """
-
-        if not self.__check_db_connection():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_order_history_db(query, table, column, **kwargs))
-            return False
-
-        cur = self.__order_history_database.cursor()
-
-        # make table
         sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
               f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
               f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
               f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
               f"menuName VARCHAR(300) {NNUL}, menuPrice INT {NNUL}, menuQuantity INT {NNUL});"
-        cur.execute(sql)
+        return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
-        # do the work
-        sql = self.__make_write_query__(query, table, column, **kwargs)
-        cur.execute(sql)
+    def acquire_user_info(self, user_id: str, legal_name=False, email=False, phone=False,
+                          age=False, gender=False, last_access_date=False) -> tuple[tuple] | None:
+        """ Acquire user information to user database. """
+        if not legal_name and not email and not phone and not age and not gender and not last_access_date:
+            legal_name = email = phone = age = gender = last_access_date = True
+        target = []
+        if legal_name:
+            target.append('legalName')
+        if email:
+            target.append('email')
+        if phone:
+            target.append('phone')
+        if age:
+            target.append('age')
+        if gender:
+            target.append('gender')
+        if last_access_date:
+            target.append('lastAccessDate')
+        table = user_id + '-' + 'userInfo'
+        return self.__read_from_user_db(table, target=target)
 
-        cur.close()
-        return True
+    def register_user_info(self, user_id: str, legal_name: str = None, email: str = None, phone: str = None,
+                           age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
+        """ Register user information from user database.
+        If silent is true, this method will not update last access date.
+        If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
+        If init is true, this method will initialize user database.
+        """
+        kwargs: dict[str, str | int] = {}
+        upd_his = []
+        del_his = []
+        if legal_name is not None:
+            if legal_name:
+                if len(legal_name) > 100:
+                    raise ValueError("Length of legal name is too long.")
+                kwargs['legalName'] = legal_name
+                upd_his.append(f"legalName='{legal_name}'")
+            else:
+                kwargs['legalName'] = ''
+                upd_his.append("legalName")
+        if email is not None:
+            if email:
+                if len(email) > 100:
+                    raise ValueError("Length of email is too long.")
+                kwargs['email'] = email
+                upd_his.append(f"email='{email}'")
+            else:
+                kwargs['email'] = ''
+                upd_his.append("email")
+        if phone is not None:
+            if phone:
+                if len(phone) > 100:
+                    raise ValueError("Length of phone number is too long.")
+                kwargs['phone'] = phone
+                upd_his.append(f"phone='{phone}'")
+            else:
+                kwargs['phone'] = ''
+                upd_his.append("phone")
+        if age is not None:
+            if age:
+                if age < 0:
+                    raise ValueError("Age is negative.")
+                kwargs['age'] = age
+                upd_his.append(f"age={age}")
+            else:
+                kwargs['age'] = 0
+                upd_his.append("age")
+        if gender is not None:
+            if gender:
+                if gender < self.USR.GENDER.none or gender > self.USR.GENDER.etc:
+                    raise ValueError(f"Gender must be {self.USR.GENDER.none}~{self.USR.GENDER.etc}")
+                kwargs['gender'] = gender
+                upd_his.append(f"gender='{gender}'")
+            else:
+                kwargs['gender'] = self.USR.GENDER.none
+                upd_his.append("gender")
+        if not silent:
+            kwargs['lastAccessDate'] = now().strftime("%Y-%m-%d")
+        table = user_id + '-' + 'userInfo'
+        if self.__write_to_user_db(INS if init else UPD, table, **kwargs):
+            table = user_id + '-' + 'alterHis'
+            upd_log = [f"{INS if init else UPD} " + ", ".join(upd_his)]
+            while len(upd_log[-1]) > self.MARIADB_VARCHAR_MAX:
+                head = upd_log[-1][:self.MARIADB_VARCHAR_MAX]
+                foot = upd_log[-1][self.MARIADB_VARCHAR_MAX:]
+                upd_log[-1] = head
+                upd_log.append(foot)
+            del_log = [f"{DEL} " + ", ".join(del_his)]
+            while len(del_log[-1]) > self.MARIADB_VARCHAR_MAX:
+                head = del_log[-1][:self.MARIADB_VARCHAR_MAX]
+                foot = del_log[-1][self.MARIADB_VARCHAR_MAX:]
+                del_log[-1] = head
+                del_log.append(foot)
+            result = [self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
+                                              alterType=self.USR.ALT.update, alterLogMessage=msg) for msg in upd_log]
+            result.extend([self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
+                                                   alterType=self.USR.ALT.delete, alterLogMessage=m) for m in del_log])
+            if result:
+                self.__user_database.commit()
+                return True
+        return False
+
+    def acquire_fcm_tokens(self, user_id: str) -> dict:
+        """ Acquire fcm tokens from user/store database. """
+        return {}
+
+    def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
+        """ Register new fcm token to user/store database.
+            If token is already in database, just return true.
+        :param token: Firebase Cloud Messaging token.
+        :param user_id: user id
+        :param pos_number: pos number or None (if None, token will be registered to user db / if not none, to store db)
+        :param flush: If true, flush the old(that have been registered for two days/months) token.
+        * When pos_number is None, then this method operates to user db.
+          Token that registered in user db need to be flushed after two months. (because of the token lifetime)
+          So, in the situation of <pos_number is None and flush is true>,
+          find expired(which is registered !!two months!! ago) tokens that registered in user db and delete them.
+        * When pos_number is not None, then this method operates to store db.
+          Token that registered in store db need to be flushed after two days. (not because of the token lifetime)
+            (just for smooth order sharing between "OrderAssistant"s;
+             This is possible because "OrderAssistant" is used every day, unlike client apps for customers.)
+          So, in the situation of <pos_number is not None and flush is true>,
+          find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
+        """
+        if flush:
+            # TODO: flush all expired tokens
+            pass
+        # TODO: put new token
+        pass
+
+
+
+
+    def acquire_user_order_history(self, user_id: str, ):
 
     def acquire_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
-        """ Acquire order history from order history database. """
+        """ Acquire order history from user database or order history database. """
+
+        if start_index is None:
+            start_index = 0
 
         # TODO: fix this
         if date is None:
@@ -601,33 +731,6 @@ class DatabaseConnection(object):
         """ Register updated last access date to user database. """
         pass
 
-    def acquire_fcm_tokens(self) -> dict:
-        """ Acquire fcm tokens from user/store database. """
-        return {}
-
-    def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
-        """ Register new fcm token to user/store database.
-            If token is already in database, just return true.
-        :param token: Firebase Cloud Messaging token.
-        :param user_id: user id
-        :param pos_number: pos number or None (if None, token will be registered to user db / if not none, to store db)
-        :param flush: If true, flush the old(that have been registered for two days/months) token.
-        * When pos_number is None, then this method operates to user db.
-          Token that registered in user db need to be flushed after two months. (because of the token lifetime)
-          So, in the situation of <pos_number is None and flush is true>,
-          find expired(which is registered !!two months!! ago) tokens that registered in user db and delete them.
-        * When pos_number is not None, then this method operates to store db.
-          Token that registered in store db need to be flushed after two days. (not because of the token lifetime)
-            (just for smooth order sharing between "OrderAssistant"s;
-             This is possible because "OrderAssistant" is used every day, unlike client apps for customers.)
-          So, in the situation of <pos_number is not None and flush is true>,
-          find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
-        """
-        if flush:
-            # TODO: flush all expired tokens
-            pass
-        # TODO: put new token
-        pass
 
     def acquire_user_order_token(self) -> str:
         """ Acquire user order token from store database.
@@ -635,12 +738,6 @@ class DatabaseConnection(object):
         """
         return ""
 
-    def calculate_disk_usage(self) -> float:
-        """ Calculate disk usage in MB.
-        :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
-        """
-        # TODO: fix this
-        return 0.0
 
 
 class ExclusiveDatabaseConnection(object):
@@ -703,27 +800,27 @@ class ExclusiveDatabaseConnection(object):
         """
         pass
 
-    def __write(self, query, table, column, **kwargs):
+    def __write(self, query, table, column_condition, **kwargs):
         """ Write to database.
         :param query: query method
         :param table: table name
-        :param column: column name | list or str
+        :param column_condition: column name | list or str
         """
         target_table = table
 
-        sql = DatabaseConnection.__make_write_query__(query, target_table, column, **kwargs)
+        sql = DatabaseConnection.__make_write_query__(query, target_table, column_condition, **kwargs)
 
         cur = self.__connection.cursor()
         cur.execute(sql)
         cur.close()
         self.__connection.commit()
 
-    def __read(self, table, column, **kwargs):
+    def __read(self, table, column_condition, **kwargs) -> tuple[tuple] | None:
         """ Read from database.
         :param table: table name
-        :param column: column name | list or str
+        :param column_condition: column name | list or str
         """
-        sql = DatabaseConnection.__make_read_query__(table, column, **kwargs)
+        sql = DatabaseConnection.__make_read_query__(table, column_condition, **kwargs)
         cur = self.__connection.cursor()
         cur.execute(sql)
         result = cur.fetchall()
@@ -746,10 +843,10 @@ class ExclusiveDatabaseConnection(object):
             pass  # TODO: check if sleep is needed.
         while not self.__set_mutex_lock():
             pass
-        original = self.__read(table='registeredPhoneNumberList', column='phoneNumber', phoneNumber=phone)[0]
+        original = self.__read(table='registeredPhoneNumberList', column_condition='phoneNumber', phoneNumber=phone)[0]
         if original is None or original[1] != new_user_id:
             query = INS if original is None else UPD
-            self.__write(query=query, table='registeredPhoneNumberList', column='phoneNumber',
+            self.__write(query=query, table='registeredPhoneNumberList', column_condition='phoneNumber',
                          phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
         self.__set_mutex_unlock()
         if not original and original[1] != new_user_id:
@@ -770,10 +867,10 @@ class ExclusiveDatabaseConnection(object):
             pass
         while not self.__set_mutex_lock():
             pass
-        original = self.__read(table='registeredBusinessLicenseNumberList', column='identifier',
+        original = self.__read(table='registeredBusinessLicenseNumberList', column_condition='identifier',
                                identifier=identifier)
         if original is None:
-            self.__write(query=INS, table='registeredBusinessLicenseNumberList', column='identifier',
+            self.__write(query=INS, table='registeredBusinessLicenseNumberList', column_condition='identifier',
                          identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
         #                                                                             # in the order of the db column.
         self.__set_mutex_unlock()
