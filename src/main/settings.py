@@ -51,24 +51,25 @@ unit_type = "bridge" if UNIT_TYPE == UnitType.BRIDGE else "pos" if UNIT_TYPE == 
 ORGANIZATION = "UntactOrder"
 
 # certificate path settings
-__CERT_DIR__ = "cert" if OS == "Windows" else f"/etc/{unit_type}server"
-if not path.isdir(__CERT_DIR__):
-    mkdir(__CERT_DIR__)
+__CERT_DIR = "cert" if OS == "Windows" else f"/etc/{unit_type}server"
+if not path.isdir(__CERT_DIR):
+    mkdir(__CERT_DIR)
 
 # server settings path
-__SETTING_DIR__ = "data"
-if not path.isdir(__SETTING_DIR__):
-    mkdir(__SETTING_DIR__)
-__SETTING_FILE_EXT__ = path.join(__SETTING_DIR__, f".{unit_type}setting")
-DB_LIST_FILE = path.join(__SETTING_DIR__, "db" + __SETTING_FILE_EXT__)
-FIREBASE_API_KEY_FILE = path.join(__SETTING_DIR__, "firebase" + __SETTING_FILE_EXT__)
-SSO_API_KEY_FILE = path.join(__SETTING_DIR__, "sso" + __SETTING_FILE_EXT__)
+__SETTING_DIR = "data"
+if not path.isdir(__SETTING_DIR):
+    mkdir(__SETTING_DIR)
+__SETTING_FILE_EXT = path.join(__SETTING_DIR, f".{unit_type}setting")
+DB_LIST_FILE = path.join(__SETTING_DIR, "db" + __SETTING_FILE_EXT)
+FIREBASE_API_KEY_FILE = path.join(__SETTING_DIR, "firebase" + __SETTING_FILE_EXT)
+SSO_API_KEY_FILE = path.join(__SETTING_DIR, "sso" + __SETTING_FILE_EXT)
 
 
 class NetworkConfig(object):
     """ Network Setting """
 
-    __GATEWAY_FILE__ = path.join(__SETTING_DIR__, "gateway" + __SETTING_FILE_EXT__)
+    global __SETTING_DIR, __SETTING_FILE_EXT
+    __GATEWAY_FILE = path.join(__SETTING_DIR, "gateway" + __SETTING_FILE_EXT)
 
     def __init__(self):
         # gateway settings for block arp attack
@@ -83,11 +84,11 @@ class NetworkConfig(object):
         self.internal_ip = info['internal_ip']
         self.external_ip = info['external_ip']
 
-        if not path.isfile(__GATEWAY_FILE__):
-            with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
+        if not path.isfile(self.__GATEWAY_FILE):
+            with open(self.__GATEWAY_FILE, 'w+', encoding='utf-8') as gateway:
                 gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
         else:
-            with open(__GATEWAY_FILE__, 'r', encoding='utf-8') as gateway:
+            with open(self.__GATEWAY_FILE, 'r', encoding='utf-8') as gateway:
                 gateway_ip, gateway_mac = gateway.read().split(",")
 
             if gateway_ip != self.gateway_ip:
@@ -96,7 +97,7 @@ class NetworkConfig(object):
                       f"If so, this script overwrite the previous record(ip, mac) and proceed.[/yellow] (y to yes) : ",
                       end='', flush=True)
                 if input().lower() == 'y':
-                    with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
+                    with open(self.__GATEWAY_FILE, 'w+', encoding='utf-8') as gateway:
                         gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
                     print("[blue> Overwrite Success.[/blue]")
                 else:
@@ -120,7 +121,7 @@ class NetworkConfig(object):
                         self.gateway_ip = gateway_ip
                         self.gateway_mac = gateway_mac
                     else:
-                        with open(__GATEWAY_FILE__, 'w+', encoding='utf-8') as gateway:
+                        with open(self.__GATEWAY_FILE, 'w+', encoding='utf-8') as gateway:
                             gateway.write(",".join([self.gateway_ip, self.gateway_mac]))
                         print("[blue> Overwrite Success.[/blue]")
 
@@ -142,33 +143,34 @@ class NetworkConfig(object):
 class RootCA(object):
     """ RootCA Certificate Storage Object """
 
-    __ROOT_CA_FILE__ = path.join(__CERT_DIR__, "rootCA.crt")
-    __BUNDLE_CERT_FILE__ = path.join("root", "rootca.bundlecert")
+    global __CERT_DIR, __SETTING_FILE_EXT
+    __ROOT_CA_FILE = path.join(__CERT_DIR, "rootCA.crt")
+    __BUNDLE_CERT_FILE = path.join("root", "rootca.bundlecert")
 
     @classmethod
     @property
     def cert_file(cls):
         """ return root CA certificate file path. """
-        return cls.__ROOT_CA_FILE__
+        return cls.__ROOT_CA_FILE
 
-    __CERT_SERVER_FILE__ = path.join("root", "rootca" + __SETTING_FILE_EXT__)
+    __CERT_SERVER_FILE = path.join("root", "rootca" + __SETTING_FILE_EXT)
 
     def __init__(self):
         # check if root CA ip setting is exist.
-        if not path.isfile(self.__ROOT_CA_FILE__):
+        if not path.isfile(self.__ROOT_CA_FILE):
             print("Root-CA ip address setting is not found. Please set the ip address of the root CA.")
-            with open(self.__CERT_SERVER_FILE__, 'w+') as file:
+            with open(self.__CERT_SERVER_FILE, 'w+') as file:
                 self.IP_ADDRESS = input("Root-CA IP Address: ")
                 file.write(self.IP_ADDRESS)
         else:
-            with open(self.__ROOT_CA_FILE__, 'r', encoding='utf-8') as file:
+            with open(self.__ROOT_CA_FILE, 'r', encoding='utf-8') as file:
                 self.IP_ADDRESS = file.read().strip()
 
         # get root CA certificate
         print("Getting root CA certificate...")
         cert = self.get_root_ca_crt()
         print("Root CA certificate is received.\n", cert)
-        self.__CA_CRT__ = crypto.load_certificate(FILETYPE_PEM, cert.encode('utf-8'))
+        self.__CA_CRT = crypto.load_certificate(FILETYPE_PEM, cert.encode('utf-8'))
 
     def get_root_ca_crt(self, port=443) -> str:
         """ Get the root CA certificate from CertServer. """
@@ -182,7 +184,7 @@ class RootCA(object):
     def check_issuer(self, crt: crypto.X509) -> bool:
         """ Check if the issuer of the certificate is same as the root CA. """
         # Start with a simple test. If the issuer is not same as the root CA, return False.
-        if crt.get_issuer() != self.__CA_CRT__.get_subject():
+        if crt.get_issuer() != self.__CA_CRT.get_subject():
             return False
 
         # If the issuer is same as the root CA, check the signature.
@@ -192,15 +194,16 @@ class RootCA(object):
 
     def get_root_ca_ip_address(self):
         """ Get the IP address of the root CA. """
-        return self.__CA_CRT__.get_subject().CN
+        return self.__CA_CRT.get_subject().CN
 
 
 class ServerCert(object):
     """ BridgeServer Keypair Storage Object """
 
-    __CERT_FILE__ = path.join(__CERT_DIR__, f"{unit_type}.crt")
-    __KEY_FILE__ = path.join(__CERT_DIR__, f"{unit_type}.key")
-    __PASS_FILE__ = path.join(__CERT_DIR__, "ssl.pass")
+    global __CERT_DIR, __SETTING_FILE_EXT
+    __CERT_FILE__ = path.join(__CERT_DIR, f"{unit_type}.crt")
+    __KEY_FILE__ = path.join(__CERT_DIR, f"{unit_type}.key")
+    __PASS_FILE__ = path.join(__CERT_DIR, "ssl.pass")
 
     def __init__(self):
         # check if certificate is exist.

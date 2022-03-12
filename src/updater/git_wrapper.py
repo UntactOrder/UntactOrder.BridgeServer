@@ -9,18 +9,18 @@ Reference : [git] https://gitpython.readthedocs.io/en/stable/tutorial.html
 import git
 
 
-def __git_clone__():
+def __git_clone():
     pass
 
 
-def __git_fetch__():
+def __git_fetch():
     pass
 
 
-def __git_pull__():
+def __git_pull():
     pass
 
 
-def __git_push__():
+def __git_push():
     pass
 

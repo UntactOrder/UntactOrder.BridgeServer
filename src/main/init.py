@@ -22,7 +22,7 @@ if OS != "Windows":
 
 
 # [import root CA certificate.]
-__ROOT_CA__ = RootCA()
+__ROOT_CA = RootCA()
 
 
 # check if server certificate is exist. => if it does, skip the process.

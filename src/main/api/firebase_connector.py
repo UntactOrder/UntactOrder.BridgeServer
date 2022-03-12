@@ -9,11 +9,11 @@ from firebase_admin import initialize_app, credentials, auth, messaging
 
 # Fetch the service account key JSON file contents
 from settings import FIREBASE_API_KEY_FILE
-__cred__ = credentials.Certificate(FIREBASE_API_KEY_FILE)
+__cred = credentials.Certificate(FIREBASE_API_KEY_FILE)
 
 # Initialize the app with a service account, granting admin privileges
-__firebase_app__ = initialize_app(__cred__)
-del __cred__
+__firebase_app = initialize_app(__cred)
+del __cred
 
 
 def create_user(email: str, password: str, display_name: str, photo_url: str) -> auth.UserRecord:

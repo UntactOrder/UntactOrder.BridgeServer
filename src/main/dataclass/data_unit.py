@@ -189,7 +189,7 @@ class User(object):
         if age is not None:
             kwargs['age'] = age if age else 0
         if gender is not None:
-            kwargs['gender'] = gender if gender else 0
+            kwargs['gender'] = gender if gender else DatabaseConnection.USR.GENDER.none
 
 
     def set_new_order_history(self, business_name: str, total_price: int, ):

@@ -21,6 +21,9 @@ SHW_TBS = "SHOW TABLES"
 SHW_TB_STAT = "SHOW TABLE STATUS"
 CRE_TB = "CREATE TABLE"
 
+NNUL = "NOT NULL"
+DFT = "DEFAULT"
+
 SEL = "SELECT"
 INS = "INSERT"
 UPD = "UPDATE"
@@ -37,19 +40,62 @@ VAL = "VALUES"
 class DatabaseConnection(object):
     """ Database Connection Class for BridgeServer """
 
-    __db_server_list__: dict[str: DatabaseConnection] = {}  # database server instance list
+    __db_server_list: dict[str: DatabaseConnection] = {}  # database server instance list
 
     if __name__ == '__main__':
         from src.main.settings import RootCA
-        __ROOT_CA__ = RootCA.cert_file
+        __ROOT_CA = RootCA.cert_file
     else:
         from settings import RootCA
-        __ROOT_CA__ = RootCA.cert_file
+        __ROOT_CA = RootCA.cert_file
 
     # Identifier Names
     # https://mariadb.com/kb/en/identifier-names/
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
+
+    # DB Constants
+    #
+    # userDatabase
+    class USR(object):
+        class GENDER(object):
+            male = 1
+            female = 2
+            neutral = 3
+            etc = 4
+            none = 0
+
+        class ALT(object):
+            insert = 0
+            update = 1
+            delete = 2
+    #
+    # storeDatabase
+
+    #
+    # orderHistoryDatabase
+    class HIS(object):
+        class STAT(object):
+            ordered = 0
+            paid = 1
+            cancelled = 2
+            delivered = 3
+            returned = 4
+
+        class PAY(object):
+            etc = 0
+            cash = 1
+            card = 2
+            kakao_pay = 3
+            naver_pay = 4
+            payco = 5
+            zero_pay = 6
+            paypal = 7
+            paytm = 8
+            phone_pay = 9
+            wechat_pay = 10
+            ali_pay = 11
+            jtnet_pay = 12
 
     # exclusive database
     exclusive = None
@@ -61,15 +107,15 @@ class DatabaseConnection(object):
         :return: DatabaseConnection instance
         """
         if db_ip is None:
-            return cls.__db_server_list__
-        return cls.__db_server_list__.get(db_ip, None)
+            return cls.__db_server_list
+        return cls.__db_server_list.get(db_ip, None)
 
     @classmethod
     def load_balanced_get_instance(cls) -> DatabaseConnection | None:
         """ Get Database Connection Instance with Load Balancing """
         stored = {}
-        for db_ip, db_instance in cls.__db_server_list__.items():
-            if db_instance.__check_db_connection__():
+        for db_ip, db_instance in cls.__db_server_list.items():
+            if db_instance.__check_db_connection():
                 stored[db_ip] = db_instance.calculate_disk_usage()
         if len(stored) == 0:
             return None
@@ -85,66 +131,66 @@ class DatabaseConnection(object):
         if exclusive_db:
             cls.exclusive = ExclusiveDatabaseConnection(host=exclusive_db[0], port=exclusive_db[1],
                                                         user_name=exclusive_db[2], password=exclusive_db[3],
-                                                        ssl_ca=cls.__ROOT_CA__)
+                                                        ssl_ca=cls.__ROOT_CA)
 
         for db_ip, port, user_name, password in db_list:
-            cls.__db_server_list__[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
+            cls.__db_server_list[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
 
     def __init__(self, db_ip, port, user_name, password):
-        self.__delayed_work__ = []  # delayed work list for emergency situation (async concept)                        #
-        #                             you should consider use temporary database for emergency situation               #
-        #                             because, this delayed_work list has a risk which the data will be disappeared    #
-        #                             when the server is shut down. Be careful.                                        #
+        self.__delayed_work = []  # delayed work list for emergency situation (async concept)                        #
+        #                           you should consider use temporary database for emergency situation               #
+        #                           because, this delayed_work list has a risk which the data will be disappeared    #
+        #                           when the server is shut down. Be careful.                                        #
 
         def delayed_work_handler():
             """ Delayed Work Handler """
-            if not self.__check_db_connection__(reconnect=True):
+            if not self.__check_db_connection(reconnect=True):
                 start_delay_work_timer()
-            self.is_timer_running = False
-            for work in self.__delayed_work__:
+            self.__is_timer_running = False
+            for work in self.__delayed_work:
                 work()
-                print(f"[green]INFO: A Delayed Work Finished. (left={len(self.__delayed_work__)}) "
+                print(f"[green]INFO: A Delayed Work Finished. (left={len(self.__delayed_work)}) "
                       f"[in Database Connection][/green]")
-            self.__user_database__.commit()
-            self.__store_database__.commit()
-            self.__order_history_database__.commit()
+            self.__user_database.commit()
+            self.__store_database.commit()
+            self.__order_history_database.commit()
 
         def start_delay_work_timer():
             """ Start Delay Work Timer """
             self.__delay_work_timer__ = Timer(60*10, delayed_work_handler)
             self.__delay_work_timer__.start()
-            self.is_timer_running = True
+            self.__is_timer_running = True
 
         def set_delayed_work(work):
             """ Set Delayed Work
             :param work: delayed work (lambda function)
             """
-            self.__delayed_work__.append(work)
-            print(f"[yellow]WARNING: Delayed Work Registered. (left={len(self.__delayed_work__)})\n"
+            self.__delayed_work.append(work)
+            print(f"[yellow]WARNING: Delayed Work Registered. (left={len(self.__delayed_work)})\n"
                   f"Do not shut down the server until there is no delayed work. [in Database Connection][/yellow]")
-            if not self.is_timer_running:
+            if not self.__is_timer_running:
                 start_delay_work_timer()
 
         self.set_delayed_work = set_delayed_work
-        self.is_timer_running = False
+        self.__is_timer_running = False
 
         ################################################################################################################
 
         self.host = db_ip
         self.port = port
-        self.__user_name__ = user_name
-        self.__password__ = password
+        self.__user_name = user_name
+        self.__password = password
 
         # common databases
-        self.__user_database__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA__,
-                                            user=self.__user_name__, password=self.__password__,
-                                            db="userDatabase", charset='utf8')
-        self.__store_database__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA__,
-                                             user=self.__user_name__, password=self.__password__,
-                                             db="storeDatabase", charset='utf8')
-        self.__order_history_database__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA__,
-                                                     user=self.__user_name__, password=self.__password__,
-                                                     db="orderHistoryDatabase", charset='utf8')
+        self.__user_database = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA,
+                                          user=self.__user_name, password=self.__password,
+                                          db="userDatabase", charset='utf8')
+        self.__store_database = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA,
+                                           user=self.__user_name, password=self.__password,
+                                           db="storeDatabase", charset='utf8')
+        self.__order_history_database = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA,
+                                                   user=self.__user_name, password=self.__password,
+                                                   db="orderHistoryDatabase", charset='utf8')
         """ Database Schema : db_name - table_name - column_name
         userDatabase {
             kakao_unique_id-userInfo {  # userInfoTable
@@ -155,7 +201,7 @@ class DatabaseConnection(object):
                                                ::: len("naver_00000000") == 14
                                         # # 8 : table name length limit
                 legalName : VARCHAR(100) | user's legal name, not nickname  # optional
-                email : VARCHAR(100) | username@domain.com, not untactorder email  # optional
+                email : VARCHAR(200) | username@domain.com, not untactorder email  # optional
                 phone : VARCHAR(100) | phone number  # required
                 age : TINYINT | age  # optional but required when ordering products with age restrictions
                 gender : TINYINT | 1=male, 2=female, 3=neutral, 4=etc, 0=none  # optional
@@ -176,11 +222,11 @@ class DatabaseConnection(object):
             kakao_unique_id-fcmToken {  # fcmTokenTable, firebase cloud messaging token
                                         # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
                 timeStamp : VARCHAR(30) | 2020-01-01
-                token : VARCHAR(100) | firebase cloud messaging token
+                token : VARCHAR(4096) | firebase cloud messaging token
             }
             kakao_unique_id-orderHis {  # orderHistoryTable
                 id : BIGINT PRIMARY KEY autoincrement | index  # index check required
-                businessName : VARCHAR(100) | business name-0
+                businessName : VARCHAR(100) | business(store) name
                 totalPrice : INT | total price
                 dbIpAddress : VARCHAR(100) | store database ip address
                 historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
@@ -239,7 +285,6 @@ class DatabaseConnection(object):
                 token : VARCHAR(4096) | firebase cloud messaging token
             }
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
-                id : INT PRIMARY KEY autoincrement | index
                 orderToken : VARCHAR(128) | user order token for pos_number
                 userEmail : VARCHAR(141) | customer id + db ip  # one customer can have only one token per pos one time.
                                                                 # token will be deleted after order is completed.
@@ -262,8 +307,8 @@ class DatabaseConnection(object):
                                                             # # 21 : datetime length limit (YYYYMMDD_HHMMSSSSSSSS)
                 id : INT PRIMARY KEY autoincrement | index
                 firebaseUid : VARCHAR(128) | user id, 1 <= uid <= 128
-                orderStatus : TINYINT | 0(null)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
-                paymentMethod : TINYINT | 0(null)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay
+                orderStatus : TINYINT | 0(default)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
+                paymentMethod : TINYINT | 0(default)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay ...
                 menuName : VARCHAR(300) | menu name  # be careful of the size
                 menuPrice : INT | menu price
                 menuQuantity : INT | menu quantity
@@ -271,24 +316,24 @@ class DatabaseConnection(object):
         }
         """
 
-        self.connected = self.__check_db_connection__()
+        self.connected = self.__check_db_connection()
 
     def __del__(self):
-        self.__user_database__.commit()
-        self.__store_database__.commit()
-        self.__order_history_database__.commit()
-        self.__user_database__.close()
-        self.__store_database__.close()
-        self.__order_history_database__.close()
+        self.__user_database.commit()
+        self.__store_database.commit()
+        self.__order_history_database.commit()
+        self.__user_database.close()
+        self.__store_database.close()
+        self.__order_history_database.close()
 
-    def __check_db_connection__(self, reconnect=False) -> bool:
+    def __check_db_connection(self, reconnect=False) -> bool:
         """ Check if the database connection is alive.
             If reconnect is True, try to reconnect database when db connection is dead.
         """
         try:
-            self.__user_database__.ping(reconnect=reconnect)
-            self.__store_database__.ping(reconnect=reconnect)
-            self.__order_history_database__.ping(reconnect=reconnect)
+            self.__user_database.ping(reconnect=reconnect)
+            self.__store_database.ping(reconnect=reconnect)
+            self.__order_history_database.ping(reconnect=reconnect)
             self.connected = True
             return self.connected
         except Exception as e:
@@ -296,7 +341,48 @@ class DatabaseConnection(object):
             self.connected = False
             return self.connected
 
-    def __read_from_user_db__(self, **kwargs) -> dict:
+    @staticmethod
+    def __make_read_query__(table, column, **kwargs):
+        """ Read from database.
+        :param table: table name
+        :param column: column name | list or str
+        """
+        target_table = table
+        target_col = column if column is list else [column]
+        target_val = [kwargs.pop(col) for col in target_col]
+
+        sql = f"{SEL} * {FRM} {target_table}"
+        if kwargs:
+            sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+        return sql
+
+    @staticmethod
+    def __make_write_query__(query, table, column, **kwargs):
+        """ Make write query sentence.
+        :param query: query method
+        :param table: table name
+        :param column: column name | list or str
+        :param kwargs: column value | list or str
+        """
+        if query == INS:
+            kwargs = {key: [val] if val is not list else val for key, val in kwargs.items()}
+            values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
+            sql = f"{INS} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ");"
+        elif query in (UPD, DEL):
+            target_col = column if column is list else [column]
+            target_val = [kwargs.pop(col) for col in target_col]
+            if query == UPD:
+                sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])
+            else:
+                sql = f"{DEL} {table}"
+            if kwargs:
+                sql += f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
+        else:
+            raise ValueError("Invalid query method.")
+
+        return sql
+
+    def __read_from_user_db(self, table, column, **kwargs) -> dict:
         """ Read user info from user database. """
 
         # TODO: fix this
@@ -310,12 +396,12 @@ class DatabaseConnection(object):
             pass
 
         sql = "SELECT * FROM store_info"
-        self.store_cursor = self.__store_database__.cursor()
+        self.store_cursor = self.__store_database.cursor()
         store_cursor.execute(sql)
         result = store_cursor.fetchall()
         return result
 
-    def __read_from_store_db__(self, **kwargs) -> dict:
+    def __read_from_store_db(self, **kwargs) -> dict:
         """ Read store info from store database. """
 
         # TODO: fix this
@@ -329,71 +415,142 @@ class DatabaseConnection(object):
             pass
 
         sql = "SELECT * FROM store_info"
-        store_cursor = self.__store_database__.cursor()
+        store_cursor = self.__store_database.cursor()
         store_cursor.execute(sql)
         result = self.store_cursor.fetchall()
         return result
 
-    def __read_from_order_history_db__(self, business_license_number: str, pos_number: int,
-                                       date: str, start_index=None) -> dict:
+    def __read_from_order_history_db(self, business_license_number: str, pos_number: int,
+                                     date: str, start_index=None) -> dict:
         """ Read order history from order history database. """
-
-        # TODO: fix this
         if start_index is None:
             start_index = 0
+
         sql = f"{business_license_number}-{pos_number}-{date}"
-        order_history_cursor = self.__order_history_database__.cursor()
+        order_history_cursor = self.__order_history_database.cursor()
         order_history_cursor.execute(f"SELECT * FROM {sql}")
         result = order_history_cursor.fetchall()
         return result
 
-    def __write_to_user_db__(self, **kwargs) -> bool:
+        cur = self.__connection__.cursor()
+    cur.execute(sql)
+    result = cur.fetchall()
+    cur.close()
+    if len(result) == 0:
+        return None
+    return result
+
+    def __write_to_user_db(self, query, table, column, **kwargs) -> bool:
         """ Write user info to user database. Do not commit in this function. """
 
-        if not self.__check_db_connection__():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_user_db__(**kwargs))
-            return None
-
-        # TODO: fix this
-
-        order_history_cursor = self.__order_history_database__.cursor()
-        order_history_cursor.execute(sql)
-        return True
-
-    def __write_to_store_db__(self, **kwargs) -> bool:
-        """ Write store info to store database. Do not commit in this function. """
-
-        if not self.__check_db_connection__():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_store_db__(**kwargs))
-            return None
-
-        # TODO: fix this
-        if 'business_license_number' in kwargs:
-            pass
-        if 'user_id' in kwargs:
-            pass
-        if 'pos_number' in kwargs:
-            pass
-        if 'date' in kwargs:
-            pass
-        sql = ""
-        order_history_cursor = self.__order_history_database__.cursor()
-        order_history_cursor.execute(sql)
-        return True
-
-    def __write_to_order_history_db__(self, business_license_number: str, pos_number: int,
-                                      date: str, order_history: dict) -> bool:
-        """ Write order history to order history database. Do not commit in this function. """
-
-        if not self.__check_db_connection__():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_order_history_db__(
-                business_license_number, pos_number, date, order_history))
+        if not self.__check_db_connection():  # delayed work for emergency situation
+            self.set_delayed_work(lambda: self.__write_to_user_db(query, table, column, **kwargs))
             return False
 
-        # TODO: fix this
-        sql = f"{business_license_number}-{pos_number}-{date}"
-        order_history_cursor = self.__order_history_database__.cursor()
-        order_history_cursor.execute(sql)
+        cur = self.__user_database.cursor()
+
+        # make table
+        if 'userInfo' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"legalName VARCHAR(100) {NNUL} {DFT} '', email : VARCHAR(200) {NNUL} {DFT} '', " \
+                  f"phone VARCHAR(100) {NNUL}, age TINYINT {NNUL} {DFT} 0, " \
+                  f"gender TINYINT {NNUL} {DFT} {self.USR.GENDER.none}, lastAccessDate VARCHAR(30) {NNUL});"
+        elif 'alterHis' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT, " \
+                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"description VARCHAR(65535) {NNUL} {DFT} '', ingredient VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"hashtag VARCHAR(65535) {NNUL} {DFT} '', pinned BOOLEAN {NNUL} default 0, menuQuantity INT);"
+        elif 'fcmToken' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
+        elif 'orderHis' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, businessName VARCHAR(100) {NNUL}, " \
+                  f"totalPrice INT {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
+                  f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
+        else:
+            raise ValueError(f"{table} is not supported.")
+        cur.execute(sql)
+
+        # do the work
+        sql = self.__make_write_query__(query, table, column, **kwargs)
+        cur.execute(sql)
+
+        cur.close()
+        return True
+
+    def __write_to_store_db(self, query, table, column, **kwargs) -> bool:
+        """ Write store info to store database. Do not commit in this function. """
+
+        if not self.__check_db_connection():  # delayed work for emergency situation
+            self.set_delayed_work(lambda: self.__write_to_store_db(query, table, column, **kwargs))
+            return False
+
+        cur = self.__store_database.cursor()
+
+        # make table
+        if 'storeInfo' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"ISO4217 VARCHAR(3) {NNUL}, businessRegistrationNumber VARCHAR(27) {NNUL}, " \
+                  f"publicIp VARCHAR(100) {NNUL}, wifiPassword VARCHAR(65535) {NNUL}, " \
+                  f"gatewayIp VARCHAR(100) {NNUL}, gatewayMac VARCHAR(200) {NNUL}, " \
+                  f"posIp VARCHAR(100) {NNUL}, posMac VARCHAR(200) {NNUL}, posPort INT {NNUL}" \
+                  f"businessName VARCHAR(100) {NNUL} {DFT} '', businessAddress VARCHAR(1000) {NNUL} {DFT} '', " \
+                  f"businessDescription VARCHAR(65535) {NNUL} {DFT} ''," \
+                  f" businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
+                  f"businessEmail VARCHAR(1000) {NNUL} {DFT} '', businessWebsite VARCHAR(10000) {NNUL} {DFT} '', " \
+                  f"businessOpenTime VARCHAR(10000) {NNUL} {DFT} '', businessCloseTime VARCHAR(10000) {NNUL} {DFT} ''" \
+                  f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
+        elif 'items' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT {NNUL}, " \
+                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"description VARCHAR(65535) {NNUL} {DFT} '', ingredient VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"hashtag VARCHAR(65535) {NNUL} {DFT} '', " \
+                  f"pinned BOOLEAN {NNUL} {DFT} 0, available  BOOLEAN {NNUL} {DFT} 1);"
+        elif 'tableAlias' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, tableString VARCHAR(10) {NNUL});"
+        elif 'fcmToken' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
+        elif 'orderToken' in table:
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+                  f"orderToken VARCHAR(128) {NNUL}, userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL});"
+        else:
+            raise ValueError(f"{table} is not supported.")
+        cur.execute(sql)
+
+        # do the work
+        sql = self.__make_write_query__(query, table, column, **kwargs)
+        cur.execute(sql)
+
+        cur.close()
+        return True
+
+    def __write_to_order_history_db(self, query, table, column, **kwargs) -> bool:
+        """ Write order history to order history database. Do not commit in this function. """
+
+        if not self.__check_db_connection():  # delayed work for emergency situation
+            self.set_delayed_work(lambda: self.__write_to_order_history_db(query, table, column, **kwargs))
+            return False
+
+        cur = self.__order_history_database.cursor()
+
+        # make table
+        sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
+              f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
+              f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
+              f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
+              f"menuName VARCHAR(300) {NNUL}, menuPrice INT {NNUL}, menuQuantity INT {NNUL});"
+        cur.execute(sql)
+
+        # do the work
+        sql = self.__make_write_query__(query, table, column, **kwargs)
+        cur.execute(sql)
+
+        cur.close()
         return True
 
     def acquire_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
@@ -406,22 +563,22 @@ class DatabaseConnection(object):
             date = [date]
 
         if pos_number is None:
-            pointer = self.__query_from_user_db__(user_id=user_id, date=date, start_index=start_index)
+            pointer = self.__read_from_user_db(user_id=user_id, date=date, start_index=start_index)
         else:
-            pointer = self.__query_from_store_db__(user_id=user_id, pos_number=pos_number)['businessLicenseNumber']
+            pointer = self.__read_from_user_db(user_id=user_id, pos_number=pos_number)['businessLicenseNumber']
 
         result = {}
         for date in date:
-            result[date] = self.__query_from_order_history_db__(business_license, pos_number, date, start_index)
+            result[date] = self.__read_from_order_history_db(business_license, pos_number, date, start_index)
         return result
 
     def register_order_history(self, user_id: str, pos_number: int, date: str, order_history: dict) -> bool:
         """ Register order history to order history database. """
 
         # TODO: fix this
-        result = self.__write_to_order_history_db__(business_license, pos_number, date, order_history)
+        result = self.__write_to_order_history_db(business_license, pos_number, date, order_history)
         if result:
-            self.__order_history_database__.commit()
+            self.__order_history_database.commit()
         return result
 
     def acquire_last_access_date(self) -> str:
@@ -480,13 +637,13 @@ class ExclusiveDatabaseConnection(object):
     def __init__(self, host, port, user_name, password, ssl_ca):
         self.host = host
         self.port = port
-        self.__user_name__ = user_name
-        self.__password__ = password
-        self.__ssl_ca__ = ssl_ca
+        self.__user_name = user_name
+        self.__password = password
+        self.__ssl_ca = ssl_ca
 
-        self.__connection__ = Connection(host=self.host, port=self.port, ssl_ca=self.__ssl_ca__,
-                                         user=self.__user_name__, password=self.__password__,
-                                         db="exclusiveDatabase", charset='utf8')
+        self.__connection = Connection(host=self.host, port=self.port, ssl_ca=self.__ssl_ca,
+                                       user=self.__user_name, password=self.__password,
+                                       db="exclusiveDatabase", charset='utf8')
         """ Database Schema : db_name - table_name - column_name
         exclusiveDatabase {
             registeredPhoneNumberList {
@@ -504,35 +661,37 @@ class ExclusiveDatabaseConnection(object):
             }
         }"""
 
+        cur = self.__connection.cursor()
         sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (" \
-              f"phoneNumber VARCHAR(100) NOT NULL, userId VARCHAR(40) NOT NULL, dbIpAddress VARCHAR(100) NOT NULL);"
-        self.__connection__.cursor().execute(sql)
+              f"phoneNumber VARCHAR(100) {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
+        cur.execute(sql)
         sql = f"{CRE_TB} IF NOT EXISTS registeredBusinessLicenseNumberList (" \
-              f"identifier VARCHAR(31) NOT NULL, userId VARCHAR(40) NOT NULL, dbIpAddress VARCHAR(100) NOT NULL);"
-        self.__connection__.cursor().execute(sql)
-        self.__connection__.commit()
+              f"identifier VARCHAR(31) {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
+        cur.execute(sql)
+        cur.close()
+        self.__connection.commit()
 
-    def __check_db_connection__(self):
+    def __check_db_connection(self):
         """ Check if database connection is alive. And if not, reconnect. """
-        return self.__connection__.ping(reconnect=True)
+        return self.__connection.ping(reconnect=True)
 
-    def __set_mutex_lock__(self, *args, **kwargs):
+    def __set_mutex_lock(self, *args, **kwargs):
         """ Set exclusive lock on the database.
         :return: True if success, False if failed.
         """
         pass
 
-    def __set_mutex_unlock__(self, *args, **kwargs):
+    def __set_mutex_unlock(self, *args, **kwargs):
         """ Unlock the mutex. """
         pass
 
-    def __check_mutex_status__(self, *args, **kwargs):
+    def __check_mutex_status(self, *args, **kwargs):
         """ Check the mutex status.
         :return: True if locked | False if unlocked
         """
         pass
 
-    def __write__(self, query, table, column, **kwargs):
+    def __write(self, query, table, column, **kwargs):
         """ Write to database.
         :param query: query method
         :param table: table name
@@ -540,37 +699,20 @@ class ExclusiveDatabaseConnection(object):
         """
         target_table = table
 
-        if query == INS:
-            sql = f"{INS} {ITO} {target_table} (" + ", ".join(kwargs) + f") {VAL} (" + ", ".join(kwargs.values()) + ");"
-        elif query in (UPD, DEL):
-            target_col = column if column is list else [column]
-            target_val = [kwargs.pop(col) for col in target_col]
-            if query == UPD:
-                sql = f"{UPD} {target_table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])\
-                      + f" {WHR} " + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
-            else:
-                sql = f"{DEL} {target_table} {WHR} "\
-                      + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
-        else:
-            raise ValueError("Invalid query method.")
+        sql = DatabaseConnection.__make_write_query__(query, target_table, column, **kwargs)
 
-        cur = self.__connection__.cursor()
+        cur = self.__connection.cursor()
         cur.execute(sql)
         cur.close()
-        self.__connection__.commit()
+        self.__connection.commit()
 
-    def __read__(self, table, column, **kwargs):
+    def __read(self, table, column, **kwargs):
         """ Read from database.
         :param table: table name
         :param column: column name | list or str
         """
-        target_table = table
-        target_col = column if column is list else [column]
-        target_val = [kwargs.pop(col) for col in target_col]
-
-        sql = f"{SEL} * {FRM} {target_table} {WHR} "\
-              + " AND ".join([f"{col}='{val}'" for col, val in zip(target_col, target_val)]) + ";"
-        cur = self.__connection__.cursor()
+        sql = DatabaseConnection.__make_read_query__(table, column, **kwargs)
+        cur = self.__connection.cursor()
         cur.execute(sql)
         result = cur.fetchall()
         cur.close()
@@ -586,18 +728,18 @@ class ExclusiveDatabaseConnection(object):
         :return: None if there's no duplicate key | (user_id, db_ip_address) if there's duplicate key
         :raise OSError: if database connection is not alive.
         """
-        if self.__check_db_connection__():
+        if self.__check_db_connection():
             raise OSError("Database connection is not alive.")
-        while self.__check_mutex_status__():
+        while self.__check_mutex_status():
             pass  # TODO: check if sleep is needed.
-        while not self.__set_mutex_lock__():
+        while not self.__set_mutex_lock():
             pass
-        original = self.__read__(table='registeredPhoneNumberList', column='phoneNumber', phoneNumber=phone)[0]
+        original = self.__read(table='registeredPhoneNumberList', column='phoneNumber', phoneNumber=phone)[0]
         if original is None or original[1] != new_user_id:
             query = INS if original is None else UPD
-            self.__write__(query=query, table='registeredPhoneNumberList', column='phoneNumber',
-                           phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
-        self.__set_mutex_unlock__()
+            self.__write(query=query, table='registeredPhoneNumberList', column='phoneNumber',
+                         phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
+        self.__set_mutex_unlock()
         if not original and original[1] != new_user_id:
             return original[1], original[2]
 
@@ -609,20 +751,20 @@ class ExclusiveDatabaseConnection(object):
         :return: True if there's no duplicate key | False if there's duplicate key
         :raise OSError: if database connection is not alive.
         """
-        if self.__check_db_connection__():
+        if self.__check_db_connection():
             raise OSError("Database connection is not alive.")
         identifier = iso4217 + '-' + business_registration_number
-        while self.__check_mutex_status__():
+        while self.__check_mutex_status():
             pass
-        while not self.__set_mutex_lock__():
+        while not self.__set_mutex_lock():
             pass
-        original = self.__read__(table='registeredBusinessLicenseNumberList', column='identifier',
-                                 identifier=identifier)
+        original = self.__read(table='registeredBusinessLicenseNumberList', column='identifier',
+                               identifier=identifier)
         if original is None:
-            self.__write__(query=INS, table='registeredBusinessLicenseNumberList', column='identifier',
-                           identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
+            self.__write(query=INS, table='registeredBusinessLicenseNumberList', column='identifier',
+                         identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
         #                                                                             # in the order of the db column.
-        self.__set_mutex_unlock__()
+        self.__set_mutex_unlock()
         if original:
             return False
         return True
