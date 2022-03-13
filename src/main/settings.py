@@ -315,29 +315,39 @@ class ServerCert(object):
             key.write(key_file)
 
 
-class AES128_Crypto:
-    def __init__(self, encrypt_key, iv):
-        self.BS = AES.block_size
-        self.encrypt_key = encrypt_key[:self.BS].encode(encoding='utf-8', errors='strict')
-        self.iv = iv[:self.BS].encode(encoding='utf-8', errors='strict')
-        self.pad = lambda s: bytes(s + (self.BS - len(s) % self.BS) * chr(self.BS - len(s) % self.BS), 'utf-8')
-        self.unpad = lambda s: s[0:-ord(s[-1:])]
+class AES256CBC:
+    BS = AES.block_size
+    KS = 32  # key size - AES256
+    __instance = {'qr': None}
 
-    def encrypt(self, raw):
-        raw = self.pad(raw)
-        cipher = AES.new(self.encrypt_key, AES.MODE_CBC, self.iv)
+    @classmethod
+    def get_instance(cls, key):
+        return cls.__instance.get(key, None)
 
+    def __init__(self, encrypt_key):
+        self.__key = encrypt_key[:self.KS].encode(encoding='utf-8', errors='strict')
+        self._pad = lambda s: bytes(s + (self.BS - len(s) % self.BS) * chr(self.BS - len(s) % self.BS), 'utf-8')
+        self._unpad = lambda s: s[:-ord(s[-1:])]
+
+    def encrypt(self, raw, iv):
+        raw = self._pad(raw)
+        iv = base64.b64decode(iv.encode(encoding='utf-8', errors='strict'))
+        cipher = AES.new(self.__key, AES.MODE_CBC, iv)
         return base64.b64encode(cipher.encrypt(raw)).decode("utf-8")
 
-    def decrypt(self, encrypted_msg):
+    def decrypt(self, encrypted_msg, iv):
         encrypted_msg = base64.b64decode(encrypted_msg)
+        iv = base64.b64decode(iv.encode(encoding='utf-8', errors='strict'))
+        cipher = AES.new(self.__key, AES.MODE_CBC, iv)
+        return self._unpad(cipher.decrypt(encrypted_msg)).decode('utf-8')
 
-        cipher = AES.new(self.encrypt_key, AES.MODE_CBC, self.iv)
-        return self.unpad(cipher.decrypt(encrypted_msg)).decode('utf-8')
+    @classmethod
+    def gen_key(cls):
+        return RSA.generate(1024).export_key().decode().split("\n")[1][-cls.KS:]
 
-    @staticmethod
-    def gen_key():
-        return RSA.generate(1024).export_key().decode().split("\n")[1][-AES.block_size:]
+    @classmethod
+    def gen_iv(cls):
+        return base64.b64encode(Random.new().read(cls.BS)).decode()
 
 
 if OS == "Windows":

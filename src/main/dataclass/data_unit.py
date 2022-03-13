@@ -22,11 +22,13 @@ if __name__ == '__main__':
     import src.main.api.firebase_connector as fcon
     from src.main.api.sso_provider import SSOProvider as SSO
     from src.main.api.store_informator import get_business_info
+    from src.main.settings import AES256CBC
 else:
     from api.database_helper import DatabaseConnection, IS, gen_random_password
     import api.firebase_connector as fcon
     from api.sso_provider import SSOProvider as SSO
     from api.store_informator import get_business_info
+    from settings import AES256CBC
 
 
 class CachableUnit(object):
@@ -103,6 +105,7 @@ class User(object):
         # create or update firebase user
         email = user_id + '@' + db.host
         password = sso_token
+        aes_iv = AES256CBC.gen_iv()
         nickname = user_info['nickname']  # required
         profile_image = user_info['profile_image']  # required
         user_email = user_info['email']  # optional
@@ -123,7 +126,7 @@ class User(object):
         user = User(user_id, db.host)
         try:
             if not user.update_user_info(legal_name=legal_name, user_email=user_email, phone=phone_number,
-                                         age=age, gender=gender, silent=False, init=is_new_user):
+                                         age=age, gender=gender, silent=False, init=is_new_user, aes_iv=aes_iv):
                 raise OSError("Database error: User creation failed.")
         except Exception as e:
             if is_new_user:
@@ -139,7 +142,7 @@ class User(object):
         # By this way, new login requests will not come in.
         # And after 10 minutes, the rest of the server can be shut down.
 
-    def __init__(self, user_id: str, db_ip: str):
+    def __init__(self, user_id: str, db_ip: str):  # !WARNING!: Do not use this constructor directly.
         self.user_id: str = user_id  # kakao/naver + _unique_id
         self.db_server: str = db_ip  # database server ip
 
@@ -154,6 +157,10 @@ class User(object):
     def get_user_info(self) -> tuple:
         """ Get user info from database. """
         return self.db_connection.acquire_user_info(self.user_id)[0]
+
+    @cached_property
+    def aes_iv(self) -> str:
+        return self.db_connection.acquire_user_info(self.user_id, aes_iv=True)[0][0]
 
     @cached_property
     def legal_name(self) -> str:
@@ -185,10 +192,10 @@ class User(object):
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
         If init is true, this method will initialize user database.
         """
-        return self.db_connection.update_user_info(self.user_id, **kwargs)
+        return self.db_connection.register_user_info(self.user_id, **kwargs)
 
     @property
-    def fcm_token(self) -> tuple[tuple[str, str], ...]:
+    def fcm_token(self) ->  tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id)
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> bool:
@@ -242,10 +249,53 @@ class Store(object):
     def get_store_by_firebase_token(firebase_id_token: str, pos_number: int) -> Store | None:
         """ Get user by firebase user id and db ip by firebase ID token. """
         try:
-            email = fcon.get_user_by_token(firebase_id_token, app=None, check_revoked=False).email
-            return Store(*(*email.split('@'), pos_number))
+            user = User(*fcon.get_user_by_token(firebase_id_token, app=None, check_revoked=False).email.split('@'))
+            store_list = user.db_connection.acquire_store_list(user.user_id)  # check if store exists
+            if f"{user.user_id}-{pos_number}" in store_list:
+                return Store(user.user_id, user.db_ip, pos_number)
         except Exception:
             return None
+
+    @staticmethod
+    def query_all_store_list() -> list:
+        """ Get all store list from all db. """
+        store_list = []
+        # TODO: fix this
+        return store_list
+
+    @staticmethod
+    def __access_store_by_identifier(customer_firebase_id_token: str, identifier: str, encrypted_msg: str
+                                     ) -> (User, str, DatabaseConnection):
+        """ Access store by identifier. """
+        customer = User.get_user_by_firebase_id_token(customer_firebase_id_token)
+        if customer is None:
+            raise ValueError("No such user.")
+        res = DatabaseConnection.exclusive.acquire_store_by_identifier_without_mutex(identifier)
+        if res is None:
+            raise ValueError("No such store.")
+        store_user = User(*res[0].split('@'))
+        pos_num, table_string = AES256CBC.get_instance('qr').decrypt(encrypted_msg, store_user.aes_iv).split('/')
+        store = Store(store_user.user_id, store_user.db_ip, int(pos_num))
+        return customer, store, table_string
+
+    @staticmethod
+    def get_order_token_by_table_string(customer_firebase_id_token: str, identifier: str,
+                                        encrypted_msg: str) -> str | False:
+        """ Get order token by table string. """
+        cus, store, table_string = Store.access_store_by_identifier(customer_firebase_id_token, identifier)
+        table_number = store.(table_string)
+        if table_number is None:
+            raise ValueError("No such table.")
+        return db_con.register_user_order_token(store_user_id, pos_number, cu.email, table_number)
+
+    @staticmethod
+    def get_store_info(customer_firebase_id_token: str, identifier: str, pos_number: int) -> tuple:
+        """ Get store common info. """
+        cu, store_user_id, db_con = Store.access_store_by_identifier(customer_firebase_id_token, identifier)
+        store_info = db_con.acquire_store_info(store_user_id, pos_number)
+        if store_info is None:
+            raise ValueError("No such store.")
+        return store_info
 
     @staticmethod
     def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str) -> Store:
@@ -269,9 +319,8 @@ class Store(object):
 
         # check if store already exists
         store_list = user.db_connection.acquire_store_list(user.user_id)
-        for store in store_list:
-            if store == f"{user.user_id}-{pos_number}":
-                raise ValueError("Store already exists.")
+        if f"{user.user_id}-{pos_number}" in store_list:
+            raise ValueError("Store already exists.")
 
         # check duplicated business registration number
         res = DatabaseConnection.exclusive.register_business_registration_number(iso4217, business_registration_number,
@@ -288,7 +337,7 @@ class Store(object):
             raise OSError("Database error: User creation failed.")
         return store
 
-    def __init__(self, user_id: str, db_ip: str, pos_number: int):
+    def __init__(self, user_id: str, db_ip: str, pos_number: int):  # !WARNING!: Do not use this constructor directly.
         self.user_id = user_id
         self.db_ip = db_ip
         self.pos_number = pos_number
@@ -310,7 +359,7 @@ class Store(object):
     def iso4217(self):
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True)[0][0]
 
-    def get_store_common_info(self):
+    def get_store_common_info(self) -> tuple | None:
         """ Get store's common information. """
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True,
                                                      business_registration_number=True, business_name=True,
@@ -320,7 +369,7 @@ class Store(object):
                                                      business_open_time=True, business_close_time=True,
                                                      business_category=True, business_sub_category=True)
 
-    def get_store_pos_info(self):
+    def get_store_pos_info(self) -> tuple | None:
         """ Get store's pos information. """
         return self.db_connection.acquire_pos_info(self.user_id, self.pos_number, public_ip=True, wifi_password=True,
                                                    gateway_ip=True, gateway_mac=True, pos_ip=True,
@@ -330,24 +379,26 @@ class Store(object):
         """ Update store information. """
         return self.db_connection.update_store_info(self.user_id, self.pos_number, **kwargs)
 
-    def get_store_item_list(self):
+    def get_store_item_list(self) -> tuple | None:
         """ Get store item list. """
-        pass
+        return self.db_connection.acquire_item_list(self.user_id, self.pos_number)
 
-    def update_store_item_list(self, **kwargs):
+    def update_store_item_list(self, new_list: list = None, update_list: list = None) -> bool:
         """ Update store item list. """
-        pass
+        return self.db_connection.update_item_list(self.user_id, self.pos_number, new_list, update_list)
 
     def get_store_table_string(self):
         """ Get store table list. """
-        pass
+        return Store.get_store_table_string(self.user_id, self.pos_number, )
+
+    def get_store_qr_code(self):
 
     def add_new_table(self, amount: int = 1):
         """ Add new table. """
         pass
 
     @property
-    def fcm_token(self) -> tuple[tuple[str, str], ...]:
+    def fcm_token(self) -> tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id, self.pos_number)
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
@@ -355,7 +406,7 @@ class Store(object):
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
-        self.db_connection.put_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
+        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
     def set_new_order_history(self, customer_emails: list, total_price: int,
                               table_number: int, order_history: list[list]):

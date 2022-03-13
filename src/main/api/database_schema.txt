@@ -9,6 +9,7 @@ class DatabaseConnection(object):
                                                ::: len("kakao_0000000000") == 16
                                                ::: len("naver_00000000") == 14
                                         # # 8 : table name length limit
+                AESIV : VARCHAR(50) | aes iv  # required
                 legalName : VARCHAR(100) | user's legal name, not nickname  # optional
                 email : VARCHAR(200) | username@domain.com, not untactorder email  # optional
                 phone : VARCHAR(100) | phone number  # required
@@ -63,8 +64,9 @@ class DatabaseConnection(object):
                 --------------------------------------------------------------------------------
                 businessName : VARCHAR(100) | business name  # required
                 businessAddress : VARCHAR(1000) | business address  # required
-                businessDescription : VARCHAR(MARIADB_VARCHAR_MAX) | business description  # optional
+                businessZipCode : INT | business zip code  # required
                 businessPhoneNumber : VARCHAR(100) | business phone number  # required
+                businessDescription : VARCHAR(MARIADB_VARCHAR_MAX) | business description  # optional
                 businessProfileImage : VARCHAR(MARIADB_VARCHAR_MAX) | business profile image  # optional
                 businessEmail : VARCHAR(1000) | business email  # optional
                 businessWebsite : VARCHAR(10000) | business website  # optional

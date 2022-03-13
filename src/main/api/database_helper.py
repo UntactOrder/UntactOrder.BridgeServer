@@ -10,6 +10,7 @@ from __future__ import annotations
 from threading import Timer
 from random import choice
 import string
+from typing import Tuple
 
 from pymysql import Connection
 
@@ -18,12 +19,9 @@ now = datetime.now
 
 # -----------------------------------------------------------------------------
 # Database Query Language
-SHW_DBS = "SHOW DATABASES"
-SHW_TBS = "SHOW TABLES"
-SHW_TB_STAT = "SHOW TABLE STATUS"
-CRE_TB = "CREATE TABLE"
-TRN_TB = "TRUNCATE TABLE"  # re-create table
-DRP_TB = "DROP TABLE"  # delete table
+SHW_DBS, SHW_TBS, SHW_TB_STAT = "SHOW DATABASES", "SHOW TABLES", "SHOW TABLE STATUS"
+CRE_TB, TRN_TB, DRP_TB = "CREATE TABLE", "TRUNCATE TABLE", "DROP TABLE"
+#                        # create table  # re-create table  # delete table
 
 NNUL, DFT = "NOT NULL", "DEFAULT"
 
@@ -350,8 +348,8 @@ class DatabaseConnection(object):
         """ Write user info to user database. Do not commit in this function. """
         if 'userInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"legalName VARCHAR(100) {NNUL} {DFT} '', email : VARCHAR(200) {NNUL} {DFT} '', " \
-                  f"phone VARCHAR(100) {NNUL}, age TINYINT {NNUL} {DFT} 0, " \
+                  f"AESIV VARCHAR(50) {NNUL}, legalName VARCHAR(100) {NNUL} {DFT} '', " \
+                  f"email VARCHAR(200) {NNUL} {DFT} '', phone VARCHAR(100) {NNUL}, age TINYINT {NNUL} {DFT} 0, " \
                   f"gender TINYINT {NNUL} {DFT} {self.USR.GENDER.none}, lastAccessDate VARCHAR(30) {NNUL});"
         elif 'alterHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
@@ -380,8 +378,8 @@ class DatabaseConnection(object):
                   f"posIp VARCHAR(100) {NNUL} {DFT} '', posMac VARCHAR(200) {NNUL} {DFT} '', " \
                   f"posPort INT {NNUL} {DFT} -1, " \
                   f"businessName VARCHAR(100) {NNUL} {DFT} '', businessAddress VARCHAR(1000) {NNUL} {DFT} '', " \
+                  f"businessZipCode INT {NNUL} {DFT} -1, businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
                   f"businessDescription VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
                   f"businessProfileImage VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"businessEmail VARCHAR(1000) {NNUL} {DFT} '', businessWebsite VARCHAR(10000) {NNUL} {DFT} '', " \
                   f"businessOpenTime VARCHAR(10000) {NNUL} {DFT} '', businessCloseTime VARCHAR(10000) {NNUL} {DFT} ''" \
@@ -416,19 +414,18 @@ class DatabaseConnection(object):
               f"menuName VARCHAR(300) {NNUL}, menuPrice INT {NNUL}, menuQuantity INT {NNUL});"
         return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
-    def acquire_user_info(self, user_id: str, legal_name=False, email=False, phone=False,
+    def acquire_user_info(self, user_id: str, aes_iv=False, legal_name=False, email=False, phone=False,
                           age=False, gender=False, last_access_date=False) -> tuple[tuple] | None:
         """ Acquire user information from user database. """
-        if not legal_name and not email and not phone and not age and not gender and not last_access_date:
-            legal_name = email = phone = age = gender = last_access_date = True
-        args = {'legalName': legal_name, 'email': email, 'phone': phone,
+        args = {'AESIV': aes_iv, 'legalName': legal_name, 'email': email, 'phone': phone,
                 'age': age, 'gender': gender, 'lastAccessDate': last_access_date}
         target = [key for key, value in args.items() if value]
         table = user_id + '-' + 'userInfo'
         return self.__read_from_user_db(table, target=target if not target else list(args.keys()))
 
     def register_user_info(self, user_id: str, legal_name: str = None, email: str = None, phone: str = None,
-                           age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
+                           age: int = None, gender: int = None, silent: bool = False,
+                           init: bool = False, aes_iv: str = None) -> bool:
         """ Register user information to user database.
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
@@ -438,6 +435,8 @@ class DatabaseConnection(object):
         upd_his = []
         del_his = []
         args = {'legalName': (legal_name, 100), 'email': (email, 200), 'phone': (phone, 100)}
+        if init:
+            args['AESIV'] = (aes_iv, 50)
         for key, (val, length) in args.items():
             if val is not None:
                 if val:
@@ -490,14 +489,14 @@ class DatabaseConnection(object):
                 return True
         return False
 
-    def acquire_fcm_tokens(self, user_id: str, pos_number: int = None) -> tuple[tuple[str, str], ...]:
+    def acquire_fcm_tokens(self, user_id: str, pos_number: int = None) -> tuple[str, ...]:
         """ Acquire fcm tokens from user/store database.
         :param user_id: user id
         :param pos_number: pos number or None (if None, acquire from user db / if not none, from store db)
         """
         # TODO: acquire fcm tokens from user/store database.
         # TODO: do commit.
-        return ("", ""), ("", "")
+        return "", ""
 
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
         """ Register new fcm token to user/store database.
@@ -674,8 +673,8 @@ class DatabaseConnection(object):
     def register_store_info(self, user_id: str, pos_number: int, public_ip: str = None, wifi_password: str = None,
                             gateway_ip: str = None, gateway_mac: str = None, pos_ip: str = None,
                             pos_mac: str = None, pos_port: int = None, business_name: str = None,
-                            business_address: str = None, business_description: str = None,
-                            business_phone: str = None, business_profile_image: str = None,
+                            business_address: str = None, business_zip_code: int = None, business_phone: str = None,
+                            business_description: str = None, business_profile_image: str = None,
                             business_email: str = None, business_website: str = None, business_open_time: str = None,
                             business_close_time: str = None, business_category: str = None,
                             business_sub_category: str = None, init: bool = False, initializer: list = None) -> bool:
@@ -693,19 +692,20 @@ class DatabaseConnection(object):
                 raise ValueError("initializer elements' length error.")
             kwargs['ISO4217'] = initializer[0]
             kwargs['businessRegistrationNumber'] = initializer[1]
-        if pos_port is not None:
-            if pos_port:
-                if pos_port < 0 or pos_port > 65535:
-                    raise ValueError("Port must be between 0 and 65535.")
-                kwargs['posPort'] = pos_port
-            else:
-                kwargs['posPort'] = -1
+        args = {'posPort': (pos_port, 0, 65535), 'businessZipCode': (business_zip_code, 0, self.MARIADB_INT_MAX)}
+        for key, (val, min_, max_) in args.items():
+            if val is not None:
+                if val:
+                    if pos_port < min_ or pos_port > max_:
+                        raise ValueError(f"{key} must be between {min_} and {max_}.")
+                    kwargs[key] = val
+                else:
+                    kwargs[key] = -1
         args = {'publicIp': (public_ip, 100), 'wifiPassword': (wifi_password, self.MARIADB_VARCHAR_MAX),
                 'gatewayIp': (gateway_ip, 100), 'gatewayMac': (gateway_mac, 200), 'posIp': (pos_ip, 100),
                 'posMac': (pos_mac, 200), 'businessName': (business_name, 100),
-                'businessAddress': (business_address, 1000),
+                'businessAddress': (business_address, 1000), 'businessPhoneNumber': (business_phone, 100),
                 'businessDescription': (business_description, self.MARIADB_VARCHAR_MAX),
-                'businessPhoneNumber': (business_phone, 100),
                 'businessProfileImage': (business_profile_image, self.MARIADB_VARCHAR_MAX),
                 'businessEmail': (business_email, 1000), 'businessWebsite': (business_website, 10000),
                 'businessOpenTime': (business_open_time, 10000), 'businessCloseTime': (business_close_time, 10000),
@@ -721,9 +721,29 @@ class DatabaseConnection(object):
         table = f"{user_id}-{pos_number}-storeInfo"
         return self.__write_to_store_db(INS if init else UPD, table, **kwargs)
 
+    def acquire_store_item_list(self, user_id: str, pos_number: int) -> tuple[tuple] | None:
+        """ Acquire store item list from user database. """
+        table = f"{user_id}-{pos_number}-items"
+        return self.__read_from_store_db(table)
 
+    def register_store_item_list(self, user_id: str, pos_number: int,
+                                 new_list: list = None, update_list: list = None) -> bool:
+        """ Register store item list to user database. """
+        table = f"{user_id}-{pos_number}-items"
+        # do insert
+        result = self.__write_to_store_db(UPD, table, )
+        # do update
+        self.__write_to_store_db(UPD, table, )
+        return
 
+    def acquire_store_table_number_by_table_string(self, store_user_id: str, pos_number: int,
+                                                   table_string: str) -> int | None:
+        """ Acquire store table number by table string. """
+        table = f"{store_user_id}-{pos_number}-tableAlias"
+        result = self.__read_from_store_db(table, column_condition='tableString', tableString=table_string, target='id')
+        return result[0][0] if result else None
 
+    def register_new_table
 
     def delete_user(self, user_id: str) -> bool:
         """ Delete user from user database. """
@@ -869,6 +889,19 @@ class ExclusiveDatabaseConnection(object):
         if original:
             return original[0]
         return True
+
+    def acquire_store_by_identifier_without_mutex(self, identifier: str) -> tuple | None:
+        """ Acquire store by identifier without mutex.
+        :param identifier: business number identifier
+        :return: (user_id, db_ip_address)
+        """
+        if self.__check_db_connection():
+            raise OSError("Database connection is not alive.")
+        store = self.__read(table='registeredBusinessLicenseNumberList', column_condition='identifier',
+                            identifier=identifier)
+        if store is None:
+            return None
+        return store[0], store[1]
 
     def delete_registered_business_number(self, iso4217: str, business_registration_number: str) -> None:
         """ Delete registered business number.
