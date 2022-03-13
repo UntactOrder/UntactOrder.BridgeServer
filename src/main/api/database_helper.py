@@ -69,6 +69,8 @@ class DatabaseConnection(object):
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
     MARIADB_VARCHAR_MAX = 65535  # byte
+    MARIADB_INT_MAX = 2147483647  # byte
+    MARIADB_INT_MIN = -2147483648  # byte
 
     # DB Constants
     #
@@ -80,6 +82,9 @@ class DatabaseConnection(object):
             neutral = 3
             etc = 4
             none = 0
+
+            max_ = etc
+            min_ = none
 
         class ALT(object):
             insert = 0
@@ -98,6 +103,9 @@ class DatabaseConnection(object):
             delivered = 3
             returned = 4
 
+            max_ = returned
+            min_ = ordered
+
         class PAY(object):
             etc = 0
             cash = 1
@@ -112,6 +120,9 @@ class DatabaseConnection(object):
             wechat_pay = 10
             ali_pay = 11
             jtnet_pay = 12
+
+            max_ = jtnet_pay
+            min_ = etc
 
     # exclusive database
     exclusive = None
@@ -246,7 +257,7 @@ class DatabaseConnection(object):
                 totalPrice : INT | total price
                 dbIpAddress : VARCHAR(100) | store database ip address
                 historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
-                                        | business_regi_number-pos_number-table_number-20220101_120000000000-ISO4217
+                                        | ISO4217-business_regi_number-pos_number-table_number-20220101_120000000000
             }
         }"""
         """
@@ -494,12 +505,8 @@ class DatabaseConnection(object):
                   f"gender TINYINT {NNUL} {DFT} {self.USR.GENDER.none}, lastAccessDate VARCHAR(30) {NNUL});"
         elif 'alterHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT, " \
-                  f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"hashtag VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"pinned BOOLEAN {NNUL} default 0, menuQuantity INT);"
+                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, alterDateTime VARCHAR(30) {NNUL}, " \
+                  f"alterType TINYINT {NNUL} {DFT} 0, alterLogMessage VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL});"
         elif 'fcmToken' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
@@ -626,8 +633,8 @@ class DatabaseConnection(object):
                 upd_his.append("age")
         if gender is not None:
             if gender:
-                if gender < self.USR.GENDER.none or gender > self.USR.GENDER.etc:
-                    raise ValueError(f"Gender must be {self.USR.GENDER.none}~{self.USR.GENDER.etc}")
+                if gender < self.USR.GENDER.min_ or gender > self.USR.GENDER.max_:
+                    raise ValueError(f"Gender must be {self.USR.GENDER.min_}~{self.USR.GENDER.max_}")
                 kwargs['gender'] = gender
                 upd_his.append(f"gender='{gender}'")
             else:
@@ -659,9 +666,14 @@ class DatabaseConnection(object):
                 return True
         return False
 
-    def acquire_fcm_tokens(self, user_id: str) -> dict:
-        """ Acquire fcm tokens from user/store database. """
-        return {}
+    def acquire_fcm_tokens(self, user_id: str, pos_number: int = None) -> tuple[tuple[str, str], ...]:
+        """ Acquire fcm tokens from user/store database.
+        :param user_id: user id
+        :param pos_number: pos number or None (if None, acquire from user db / if not none, from store db)
+        """
+        # TODO: acquire fcm tokens from user/store database.
+        # TODO: do commit.
+        return (("", ""), )
 
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
         """ Register new fcm token to user/store database.
@@ -682,55 +694,112 @@ class DatabaseConnection(object):
           find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
         """
         if flush:
-            # TODO: flush all expired tokens
+            # TODO: flush all expired tokens.
             pass
-        # TODO: put new token
-        pass
+        # TODO: check token length.
+        # TODO: put new token.
+        # TODO: do commit.
+        return True
 
+    def acquire_user_order_history(self, user_id: str, start_index=None, opr=GTE) -> tuple[tuple, ...] | None:
+        """ Acquire user order history.
+        :param user_id: user id
+        :param start_index: start index or None (if None, all orders will be acquired)
+        :param opr: an operator to query data such as less than or equal or larger or etc to the start index
+        :return: order history
+        """
+        table = user_id + '-' + 'orderHis'
+        return self.__read_from_user_db(table, column_condition='id', id=start_index, opr=opr)
 
-
-
-    def acquire_user_order_history(self, user_id: str, ):
-
-    def acquire_order_history(self, user_id: str, pos_number=None, date=None, start_index=None) -> dict:
-        """ Acquire order history from user database or order history database. """
-
-        if start_index is None:
-            start_index = 0
-
-        # TODO: fix this
+    def acquire_order_history(self, pointer: str, date=None) -> tuple[tuple, ...] | None:
+        """ Acquire order history from order history database.
+        :param pointer: pointer to order history database
+        :param date: yyyymmdd format | if the pointer is not accurate, a date is required.
+        """
         if date is None:
-            return None
-        elif date is str:
-            date = [date]
-
-        if pos_number is None:
-            pointer = self.__read_from_user_db(user_id=user_id, date=date, start_index=start_index)
+            result = self.__read_from_order_history_db(pointer)
+            if result is None:
+                return None
+            result = (result, )
         else:
-            pointer = self.__read_from_user_db(user_id=user_id, pos_number=pos_number)['businessLicenseNumber']
-
-        result = {}
-        for date in date:
-            result[date] = self.__read_from_order_history_db(business_license, pos_number, date, start_index)
+            datetime.strptime(date, "%Y%m%d")  # check date format
+            history_list = self.search_table_by_name_format(self.__order_history_database, pointer+'-'+date+'_')
+            if history_list is None:
+                return None
+            result = (self.__read_from_order_history_db(his) for his in history_list)
         return result
 
-    def register_order_history(self, user_id: str, pos_number: int, date: str, order_history: dict) -> bool:
-        """ Register order history to order history database. """
+    def register_user_order_history(self, user_id: str,
+                                    business_name: str, total_price: int, db_ip: str, pointer: str) -> bool:
+        """ Register user order history to user database.
+        :param user_id: user id
+        :param business_name: business name
+        :param total_price: total price
+        :param db_ip: database ip
+        :param pointer: pointer to order history database
+        """
+        table = user_id + '-' + 'orderHis'
+        if len(business_name) > 100:
+            raise ValueError("Length of business name is too long.")
+        if total_price > self.MARIADB_INT_MAX or total_price < self.MARIADB_INT_MIN:
+            raise ValueError("Total price is out of range.")
+        if len(db_ip) > 100:
+            raise ValueError("Length of database ip is too long.")
+        if len(pointer) > self.MARIADB_VARCHAR_MAX:
+            raise ValueError("Length of pointer is too long.")
+        result = self.__write_to_user_db(INS, table, businessName=business_name,
+                                         totalPrice=total_price, dbIpAddress=db_ip, historyStoragePointer=pointer)
+        if result:
+            self.__user_database.commit()
+        return result
 
-        # TODO: fix this
-        result = self.__write_to_order_history_db(business_license, pos_number, date, order_history)
+    def register_order_history(self, pointer: str, order_history: list[list, ...]) -> bool:
+        """ Register order history to order history database.
+        :param pointer: order history database table name
+        :param order_history: order history | list[list, ...]
+        [
+            [firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],
+            [firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],
+            ...
+        ]
+        """
+        zipper = zip(*order_history)
+        firebase_uids = list(next(zipper))
+        if [True for uid in firebase_uids if len(uid) > 128]:
+            raise ValueError("Length of firebase uid is too long.")
+        order_statuses = list(next(zipper))
+        if [True for status in order_statuses if status > self.HIS.STAT.max_ or status < self.HIS.STAT.min_]:
+            raise ValueError("Order status is out of range.")
+        payment_methods = list(next(zipper))
+        if [True for method in payment_methods if method > self.HIS.PAY.max_ or method < self.HIS.PAY.min_]:
+            raise ValueError("Payment method is out of range.")
+        menu_names = list(next(zipper))
+        # if [True for name in menu_names if len(name) > 300]:
+        #    raise ValueError("Length of menu name is too long.")
+        # we don't need to check length of menu name because it is from our database
+        menu_prices = list(next(zipper))
+        # if [True for price in menu_prices if price > self.MARIADB_INT_MAX or price < self.MARIADB_INT_MIN]:
+        #    raise ValueError("Menu price is out of range.")
+        # for the same reason as the menu name, we don't need to check the length of menu price.
+        menu_quantities = list(next(zipper))
+        if [True for quantity in menu_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
+            raise ValueError("Menu quantity is out of range.")
+        result = self.__write_to_order_history_db(INS, pointer, firebaseUid=firebase_uids, orderStatus=order_statuses,
+                                                  paymentMethod=payment_methods, menuName=menu_names,
+                                                  menuPrice=menu_prices, menuQuantity=menu_quantities)
         if result:
             self.__order_history_database.commit()
         return result
 
-    def acquire_last_access_date(self) -> str:
-        """ Acquire last access date from user database. """
-        return ""
-
-    def register_updated_last_access_date(self, user_id: str, date: str) -> bool:
-        """ Register updated last access date to user database. """
-        pass
-
+    def acquire_store_list(self, user_id: str, ) -> list[str] | None:
+        """ Acquire store list from store database.
+        :return: store list | list[str]
+        """
+        result = self.search_table_by_name_format(self.__store_database, user_id+'-')
+        if result is None:
+            return []
+        result = [store.replace('storeInfo', '') for store in result if store.endswith('-storeInfo')]
+        return result
 
     def acquire_user_order_token(self) -> str:
         """ Acquire user order token from store database.
@@ -738,6 +807,31 @@ class DatabaseConnection(object):
         """
         return ""
 
+
+
+
+    def delete_user(self, user_id: str) -> bool:
+        """ Delete user from user database. """
+        result = self.__write_to_user_db(DRP_TB, user_id+'-userInfo')
+        self.__write_to_user_db(DRP_TB, user_id+'-alterHis')
+        self.__write_to_user_db(DRP_TB, user_id+'-fcmToken')
+        self.__write_to_user_db(DRP_TB, user_id+'-orderHis')
+        if result:
+            self.__user_database.commit()
+            return True
+        return False
+
+    def delete_store(self, user_id: str, pos_number: int) -> bool:
+        """ Delete store from store database. """
+        result = self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-storeInfo")
+        self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-items")
+        self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-tableAlias")
+        self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-fcmToken")
+        self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-orderToken ")
+        if result:
+            self.__user_database.commit()
+            return True
+        return False
 
 
 class ExclusiveDatabaseConnection(object):
@@ -877,3 +971,20 @@ class ExclusiveDatabaseConnection(object):
         if original:
             return False
         return True
+
+    def delete_registered_business_number(self, iso4217: str, business_registration_number: str) -> None:
+        """ Delete registered business number.
+        :param iso4217: ISO 4217 currency code
+        :param business_registration_number: business registration number
+        :raise OSError: if database connection is not alive.
+        """
+        if self.__check_db_connection():
+            raise OSError("Database connection is not alive.")
+        identifier = iso4217 + '-' + business_registration_number
+        while self.__check_mutex_status():
+            pass
+        while not self.__set_mutex_lock():
+            pass
+        self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='identifier',
+                     identifier=identifier)
+        self.__set_mutex_unlock()

@@ -7,6 +7,8 @@ Reference : [caching] https://stackoverflow.com/questions/50866911/caching-in-me
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from __future__ import annotations
 
+from datetime import datetime
+now = datetime.now
 from threading import Timer
 from random import choice
 import string
@@ -17,11 +19,11 @@ from cachetools.func import ttl_cache
 from iso4217 import Currency
 
 if __name__ == '__main__':
-    from src.main.api.database_helper import DatabaseConnection
+    from src.main.api.database_helper import DatabaseConnection, IS
     import src.main.api.firebase_connector as fcon
     from src.main.api.sso_provider import SSOProvider as sso
 else:
-    from api.database_helper import DatabaseConnection
+    from api.database_helper import DatabaseConnection, IS
     import api.firebase_connector as fcon
     from api.sso_provider import SSOProvider as sso
 
@@ -48,16 +50,6 @@ class User(object):
     """ Cachable User Data Unit object.
         with this class, you can get and set user data from user database or GitHub or firebase.
     """
-
-    @staticmethod
-    def get_user_by_order_token(store_owner_id: str, pos_number: int, order_token: str) -> User:
-        """ Get user by order token. """
-        pass
-
-    @staticmethod
-    def get_store_order_token(store_owner_id: str, pos_number: int, user_id: str) -> str:
-        """ Get store order token. 1 token by 1 user in 1 store in 1 pos at the same time. """
-        return Store.
 
     @classmethod
     def get_user_by_firebase_token(cls, firebase_token: str) -> User | None:
@@ -209,33 +201,43 @@ class User(object):
         return self.db_connection.update_user_info(self.user_id,
                                                    legal_name, email, phone_number, age, gender, silent, init)
 
-    @cached_property
-    def fcm_token(self) -> list:
+    @property
+    def fcm_token(self) -> tuple[tuple[str, str], ...]:
+        return self.db_connection.accuire_fcm_tokens(self.user_id)
 
-        tokens = []
-        return tokens
-
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> bool:
         """ Put new fcm token to user database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two month) token.
         """
-        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, flush)
+        return self.db_connection.register_new_fcm_token(fcm_token, self.user_id, flush)
 
-    @property
-    def
+    def get_order_history(self, start_index: int) -> tuple[tuple, ...] | None:
+        """ Get order history from user database. """
+        return self.db_connection.acquire_order_history(self.user_id, start_index)
 
+    def get_detailed_order_history(self, target_index: int) -> tuple[tuple, ...] | None:
+        """ Get detailed order history from order history database.
+        !WARNING! User can only access his own order history.
+        """
+        history = self.db_connection.acquire_detailed_order_history(self.user_id, target_index, IS)
+        if history is None:
+            raise ValueError("No such order history.")
+        business_name, total_price, dp_ip, pointer = history[0]
+        result = DatabaseConnection.get_instance(dp_ip).acquire_detailed_order_history(self.user_id, pointer)
+        if result is None:
+            raise OSError("Database error: No such order history in order history database.")
+        return (business_name, total_price, result), history
 
+    def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> bool:
+        """ This method will be called by Store object. """
+        return self.db_connection.register_user_order_history(self.user_id, business_name, total_price, db_ip, pointer)
 
-
-    def set_new_order_history(self, business_name: str, total_price: int, ):
-        pass
-
-    def get_order_history(self, business_name: str, ):
-        pass
-
-    def get_detailed_order_history(self, business_)
-
+    def delete_user(self) -> bool:
+        """ Delete user from database. """
+        result = self.db_connection.delete_user(self.user_id)
+        fcon.delete_user(self.user_id)
+        return result
 
 
 @CachableUnit.ttl_cache_preset()
@@ -243,9 +245,6 @@ class Store(object):
     """ Cachable Store Data Unit object.
         with this class, you can get and set user data from user store or GitHub.
     """
-
-    @staticmethod
-    def get_store_by_order_token():
 
     @classmethod
     def get_store_by_id(cls, store_id):
@@ -256,7 +255,10 @@ class Store(object):
         return Store.cached_stores[store_id]
 
     @staticmethod
-    def get_store_list(firebase_token: str):
+    def get_store_list(firebase_id_token: str):
+        """ Get user's store list by firebase id token. """
+        user = User.get_user_by_firebase_id_token(firebase_id_token)
+        user.db_connection.acquire_store_list(user.user_id)
 
     @staticmethod
     def sign_up(firebase_id_token: str, business_registration_number: str, pos_number: int):
@@ -311,7 +313,7 @@ class Store(object):
         # create or update user in database
         user = User(*email.split('@'))
 
-    def __init__(self):
+    def __init__(self, user_id: str, ):
         self.business_license_number = None
         self.user_id = None
         self.pos_number = None
@@ -330,9 +332,19 @@ class Store(object):
         """ Get pos menu list. """
         pass
 
-    def set_new_order_history(self, order_token, order_history):
+    def set_new_order_history(self, customer_emails: list, total_price: int,
+                              table_number: int, order_history: list[list]):
         """ Set new order history. """
-        pass
+        table = f"{self.iso4217}_{self.business_registration_number}" \
+                f"_{self.pos_number}_{table_number}_{now().strftime('%Y%m%d_%H%M%S%f')}"
+
+        result
+
+        for customer in customer_emails:
+            user = User(*customer.split('@'))
+            user.set_new_order_history(self.business_name, total_price, db_ip, table)
+
+        return result
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
         """ Put new fcm token to store database.
@@ -340,3 +352,12 @@ class Store(object):
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
         self.db_connection.put_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
+
+
+
+    def delete_store(self):
+        """ Delete store. """
+        result = self.db_connection.delete_store(self.user_id, self.pos_number)
+        user = User(*self.email.split('@'))
+        if user.db_connection.acquire_store_list(user.user_id) is None:
+            DatabaseConnection.exclusive.delete_store(self.iso4217, self.business_registration_number)

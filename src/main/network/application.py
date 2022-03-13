@@ -51,6 +51,73 @@ def add_fcm_token(firebase_id_token: str, fcm_token: str, **kwargs) -> bool:
     if user is None:
         return False
     result = user.set_new_firebase_token(fcm_token)
+
+
+
+
+    if result is False:
+        raise OSError("There is no DB connection, so modification work is scheduled.")
+    return result
+
+
+def add_order_history(firebase_id_token: str, order_tokens: dict, order_history: list[list]) -> bool:
+    """ Adds the order history to the database.
+    :param firebase_id_token: The firebase id token of the user.
+    :param order_tokens: The order tokens.
+    :param order_history: The order history.
+    """
+    # find the user
+    user = User.get_user_by_firebase_token(firebase_id_token)
+    if user is None:
+        return False
+
+    # find the store
+    store = None
+
+    # find the user id + db, table number ip by order tokens
+    customer_emails = []
+    table_number = 1
+
+    # find the firebase user by user id + db ip
+
+
+    total_price = 0
+    for row in order_history:
+
+
+    result = store.set_new_order_history(customer_emails, total_price, table_number, order_history)
+    if result is False:
+        raise OSError("There is no DB connection, so modification work is scheduled.")
+    return result
+
+
+def generate_order_token(firebase_id_token: str, store_identifier: str, pos_number: int, table_string: str) -> bool:
+    """ Generates the order token. 1 token by 1 user in 1 store in 1 pos in 1 table at the same time.
+    :param firebase_id_token: The firebase id token of the user.
+    :param store_identifier: The store identifier. (iso4217 + business registration number)
+    :param pos_number: The pos number.
+    :param table_string: The table string.
+    """
+    # find the user
+    user = User.get_user_by_firebase_token(firebase_id_token)
+    if user is None:
+        return False
+
+    # find the store
+    store = None
+
+    # find the user id + db, table number ip by order tokens
+    customer_emails = []
+    table_number = 1
+
+    # find the firebase user by user id + db ip
+
+
+    total_price = 0
+    for row in order_history:
+
+
+    result = store.set_new_order_history(customer_emails, total_price, table_number, order_history)
     if result is False:
         raise OSError("There is no DB connection, so modification work is scheduled.")
     return result
