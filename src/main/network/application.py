@@ -93,6 +93,7 @@ def add_order_history(firebase_id_token: str, order_tokens: dict, order_history:
 
 def generate_order_token(firebase_id_token: str, store_identifier: str, pos_number: int, table_string: str) -> bool:
     """ Generates the order token. 1 token by 1 user in 1 store in 1 pos in 1 table at the same time.
+    IF token is already generated, it will return the token.
     :param firebase_id_token: The firebase id token of the user.
     :param store_identifier: The store identifier. (iso4217 + business registration number)
     :param pos_number: The pos number.

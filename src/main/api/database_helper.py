@@ -8,13 +8,13 @@ Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.h
 from __future__ import annotations
 
 from threading import Timer
-from datetime import datetime
-now = datetime.now
 from random import choice
 import string
 
 from pymysql import Connection
 
+from datetime import datetime
+now = datetime.now
 
 # -----------------------------------------------------------------------------
 # Database Query Language
@@ -51,6 +51,20 @@ AL = "*"
 
 __V = lambda value: f"{value}" if value is int else f"'{value}'"
 # -----------------------------------------------------------------------------
+
+
+# define password generator
+def gen_random_password(length: int = 28, pool=string.ascii_letters+string.digits+string.punctuation) -> str:
+    return "".join([choice(pool) for i in range(length)])
+
+
+# define token generator
+def token_generator(length: int = 128):
+    return gen_random_password(length)
+
+
+def table_string_generator(length: int = 10):
+    return gen_random_password(length, string.ascii_letters+string.digits)
 
 
 class DatabaseConnection(object):
@@ -218,131 +232,6 @@ class DatabaseConnection(object):
         self.__order_history_database = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA,
                                                    user=self.__user_name, password=self.__password,
                                                    db="orderHistoryDatabase", charset='utf8')
-        """ Database Schema : db_name - table_name - column_name
-        userDatabase {
-            kakao_unique_id-userInfo {  # userInfoTable
-                                        # table name length limit is 64
-                                        # 64 >= 40 +1+ 8(up to 10) = 49(up to 51)
-                                        # # 40 : user id length limit
-                                               ::: len("kakao_0000000000") == 16
-                                               ::: len("naver_00000000") == 14
-                                        # # 8 : table name length limit
-                legalName : VARCHAR(100) | user's legal name, not nickname  # optional
-                email : VARCHAR(200) | username@domain.com, not untactorder email  # optional
-                phone : VARCHAR(100) | phone number  # required
-                age : TINYINT | age  # optional but required when ordering products with age restrictions
-                gender : TINYINT | 1=male, 2=female, 3=neutral, 4=etc, 0=none  # optional
-                lastAccessDate : VARCHAR(30) | 2022-01-01  # for legal process
-                                                           # If the user has not used the service for a year,
-                                                             the user information is should be deleted.
-                                                           # 30 days before deleting user information,
-                                                             the user should be notified of the fact
-                                                             that user info is scheduled to be deleted.
-            }
-            kakao_unique_id-alterHis {  # userDatabaseAlterHistoryTable
-                                        # only record database user info update and delete (except last access date)
-                id : BIGINT PRIMARY KEY autoincrement | index
-                alterDateTime : VARCHAR(30) | 2022-01-01_12:00:00:000000
-                alterType : TINYINT | 1=update, 2=delete
-                alterLogMessage : VARCHAR(MARIADB_VARCHAR_MAX) | update or delete log message  # be careful of length
-            }
-            kakao_unique_id-fcmToken {  # fcmTokenTable, firebase cloud messaging token
-                                        # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
-                timeStamp : VARCHAR(30) | 2020-01-01
-                token : VARCHAR(4096) | firebase cloud messaging token
-            }
-            kakao_unique_id-orderHis {  # orderHistoryTable
-                id : BIGINT PRIMARY KEY autoincrement | index  # index check required
-                businessName : VARCHAR(100) | business(store) name
-                totalPrice : INT | total price
-                dbIpAddress : VARCHAR(100) | store database ip address
-                historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
-                                        | ISO4217-business_regi_number-pos_number-table_number-20220101_120000000000
-            }
-        }"""
-        """
-        storeDatabase {
-            kakao_unique_id-pos_number-storeInfo {  # storeInfoTable
-                                                    # 64 >= 40 +1+ 3 +1+ 8(up to 10) = 53(up to 55)
-                                                    # # 40 : user id length limit
-                                                           ::: len("kakao_0000000000") == 16
-                                                           ::: len("naver_00000000") == 14
-                                                    # # 3 : pos number length limit (0 ~ 999)
-                                                    # # 9 : table name length limit
-                ISO4217 : VARCHAR(3) | ISO 4217 currency code  # required
-                businessRegistrationNumber : VARCHAR(27) | business registration (license) number  # required
-                publicIp : VARCHAR(100) | public ip address  # required
-                wifiPassword : VARCHAR(MARIADB_VARCHAR_MAX) | wifi password  # required
-                gatewayIp : VARCHAR(100) | gateway ip address  # required
-                gatewayMac : VARCHAR(200) | gateway mac address  # required
-                posIp : VARCHAR(100) | pos server ip address  # required
-                posMac : VARCHAR(200) | pos server mac address  # required
-                posPort : INT | pos port number  # required
-                --------------------------------------------------------------------------------
-                businessName : VARCHAR(100) | business name  # required
-                businessAddress : VARCHAR(1000) | business address  # required
-                businessDescription : VARCHAR(MARIADB_VARCHAR_MAX) | business description  # optional
-                businessPhoneNumber : VARCHAR(100) | business phone number  # required
-                businessProfileImage : VARCHAR(MARIADB_VARCHAR_MAX) | business profile image  # optional
-                businessEmail : VARCHAR(1000) | business email  # optional
-                businessWebsite : VARCHAR(10000) | business website  # optional
-                businessOpenTime : VARCHAR(10000) | business open time  # optional
-                businessCloseTime : VARCHAR(10000) | business close time  # optional
-                businessCategory : VARCHAR(1000) | business category  # required
-                businessSubCategory : VARCHAR(2000) | business sub category  # optional
-            }
-            kakao_unique_id-pos_number-items {  # storeItemListTable
-                id : INT PRIMARY KEY autoincrement | index
-                name : VARCHAR(100) | item name  # required
-                price : INT | item price  # required
-                type : VARCHAR(100) | item type  # required
-                photoUrl : VARCHAR(MARIADB_VARCHAR_MAX) | item photo url  # optional
-                description : VARCHAR(MARIADB_VARCHAR_MAX) | item description  # optional
-                ingredient : VARCHAR(MARIADB_VARCHAR_MAX) | item ingredient  # optional
-                hashtag : VARCHAR(MARIADB_VARCHAR_MAX) | item hashtag  # optional
-                pinned : BOOLEAN | whether to recommend or not.  # optional
-                available : BOOLEAN | whether item is deprecated  # required
-            }
-            kakao_unique_id-pos_number-tableAlias {  # storeTableStringTable
-                id : INT PRIMARY KEY autoincrement | index
-                tableString : VARCHAR(10) | table string  # required
-            }
-            kakao_unique_id-pos_number-fcmToken {  # fcmTokenTable, firebase cloud messaging token
-                                                   # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
-                timeStamp : VARCHAR(30) | 2020-01-01
-                token : VARCHAR(4096) | firebase cloud messaging token
-            }
-            kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
-                orderToken : VARCHAR(128) | user order token for pos_number
-                userEmail : VARCHAR(141) | customer id + db ip  # one customer can have only one token per pos one time.
-                                                                # token will be deleted after order is completed.
-                                                                # To prevent errors, tokens should not expire
-                                                                  or be deleted before the order is completed.
-                tableNumber : INT | table number
-            }
-        }"""
-        """
-        orderHistoryDatabase {  # Order history must be located on the same server as the store account's.
-            ISO4217-business_registration_number-pos_number-table_number-20220101_120000000000 {
-                                                            # ISO4217 + store info + order datetime code as history name
-                                                            # ISO4217 is monetary unit code - ex : USD, EUR, KRW, etc.
-                                                            # # https://en.wikipedia.org/wiki/ISO_4217
-                                                            # length limit 64 >= 3 +1+ 27 +1+ 3 +1+ 4 +1+ 21 = 62
-                                                            # # 3 : ISO4217 code length limit (ISO4217)
-                                                            # # 27 : business registration number length limit
-                                                            # # 3 : pos number length limit (0 ~ 999)
-                                                            # # 4 : table number length limit (0 ~ 9999)
-                                                            # # 21 : datetime length limit (YYYYMMDD_HHMMSSSSSSSS)
-                id : INT PRIMARY KEY autoincrement | index
-                firebaseUid : VARCHAR(128) | user id, 1 <= uid <= 128
-                orderStatus : TINYINT | 0(default)=ordered, 1=paid, 2=cancelled, 3=delivered, 4=returned  # for future use
-                paymentMethod : TINYINT | 0(default)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay, 5=payco, 6=zero_pay ...
-                menuName : VARCHAR(300) | menu name  # be careful of the size
-                menuPrice : INT | menu price
-                menuQuantity : INT | menu quantity
-            }  # total price can be calculated by sum_by_rows(menuPrice*menuQuantity)
-        }"""
-
         self.connected = self.__check_db_connection()
 
     def __del__(self):
@@ -505,8 +394,8 @@ class DatabaseConnection(object):
                   f"gender TINYINT {NNUL} {DFT} {self.USR.GENDER.none}, lastAccessDate VARCHAR(30) {NNUL});"
         elif 'alterHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, alterDateTime VARCHAR(30) {NNUL}, " \
-                  f"alterType TINYINT {NNUL} {DFT} 0, alterLogMessage VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL});"
+                  f"alterDateTime VARCHAR(30) {NNUL}, alterType TINYINT {NNUL} {DFT} 0, " \
+                  f"alterLogMessage VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL});"
         elif 'fcmToken' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
@@ -524,9 +413,11 @@ class DatabaseConnection(object):
         if 'storeInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"ISO4217 VARCHAR(3) {NNUL}, businessRegistrationNumber VARCHAR(27) {NNUL}, " \
-                  f"publicIp VARCHAR(100) {NNUL}, wifiPassword VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL}, " \
-                  f"gatewayIp VARCHAR(100) {NNUL}, gatewayMac VARCHAR(200) {NNUL}, " \
-                  f"posIp VARCHAR(100) {NNUL}, posMac VARCHAR(200) {NNUL}, posPort INT {NNUL}" \
+                  f"publicIp VARCHAR(100) {NNUL} {DFT} '', " \
+                  f"wifiPassword VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
+                  f"gatewayIp VARCHAR(100) {NNUL} {DFT} '', gatewayMac VARCHAR(200) {NNUL} {DFT} '', " \
+                  f"posIp VARCHAR(100) {NNUL} {DFT} '', posMac VARCHAR(200) {NNUL} {DFT} '', " \
+                  f"posPort INT {NNUL} {DFT} -1, " \
                   f"businessName VARCHAR(100) {NNUL} {DFT} '', businessAddress VARCHAR(1000) {NNUL} {DFT} '', " \
                   f"businessDescription VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"businessPhoneNumber VARCHAR(100) {NNUL} {DFT} '', " \
@@ -566,7 +457,7 @@ class DatabaseConnection(object):
 
     def acquire_user_info(self, user_id: str, legal_name=False, email=False, phone=False,
                           age=False, gender=False, last_access_date=False) -> tuple[tuple] | None:
-        """ Acquire user information to user database. """
+        """ Acquire user information from user database. """
         if not legal_name and not email and not phone and not age and not gender and not last_access_date:
             legal_name = email = phone = age = gender = last_access_date = True
         target = []
@@ -587,7 +478,7 @@ class DatabaseConnection(object):
 
     def register_user_info(self, user_id: str, legal_name: str = None, email: str = None, phone: str = None,
                            age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
-        """ Register user information from user database.
+        """ Register user information to user database.
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
         If init is true, this method will initialize user database.
@@ -606,7 +497,7 @@ class DatabaseConnection(object):
                 upd_his.append("legalName")
         if email is not None:
             if email:
-                if len(email) > 100:
+                if len(email) > 200:
                     raise ValueError("Length of email is too long.")
                 kwargs['email'] = email
                 upd_his.append(f"email='{email}'")
@@ -661,7 +552,7 @@ class DatabaseConnection(object):
                                               alterType=self.USR.ALT.update, alterLogMessage=msg) for msg in upd_log]
             result.extend([self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
                                                    alterType=self.USR.ALT.delete, alterLogMessage=m) for m in del_log])
-            if result:
+            if False not in result:
                 self.__user_database.commit()
                 return True
         return False
@@ -673,7 +564,7 @@ class DatabaseConnection(object):
         """
         # TODO: acquire fcm tokens from user/store database.
         # TODO: do commit.
-        return (("", ""), )
+        return ("", ""), ("", "")
 
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
         """ Register new fcm token to user/store database.
@@ -711,7 +602,7 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'orderHis'
         return self.__read_from_user_db(table, column_condition='id', id=start_index, opr=opr)
 
-    def acquire_order_history(self, pointer: str, date=None) -> tuple[tuple, ...] | None:
+    def acquire_order_history(self, pointer: str, date=None) -> tuple | tuple[tuple, ...] | None:
         """ Acquire order history from order history database.
         :param pointer: pointer to order history database
         :param date: yyyymmdd format | if the pointer is not accurate, a date is required.
@@ -720,13 +611,12 @@ class DatabaseConnection(object):
             result = self.__read_from_order_history_db(pointer)
             if result is None:
                 return None
-            result = (result, )
         else:
             datetime.strptime(date, "%Y%m%d")  # check date format
             history_list = self.search_table_by_name_format(self.__order_history_database, pointer+'-'+date+'_')
             if history_list is None:
                 return None
-            result = (self.__read_from_order_history_db(his) for his in history_list)
+            result = tuple(self.__read_from_order_history_db(his) for his in history_list)
         return result
 
     def register_user_order_history(self, user_id: str,
@@ -791,7 +681,7 @@ class DatabaseConnection(object):
             self.__order_history_database.commit()
         return result
 
-    def acquire_store_list(self, user_id: str, ) -> list[str] | None:
+    def acquire_store_list(self, user_id: str) -> list[str]:
         """ Acquire store list from store database.
         :return: store list | list[str]
         """
@@ -801,11 +691,113 @@ class DatabaseConnection(object):
         result = [store.replace('storeInfo', '') for store in result if store.endswith('-storeInfo')]
         return result
 
-    def acquire_user_order_token(self) -> str:
+    def acquire_user_by_order_token(self, store_user_id: str, pos_number: int, token: str | list
+                                    ) -> tuple[str, str, str] | tuple[tuple[str, str, str]] | None | tuple[None, ...]:
         """ Acquire user order token from store database.
-        :return: order token | if user's phone number is not registered, return None.
+        :return: order token | if token is not registered, return None.
+                               if token is list and some token is not registered, return tuple[str, ..., None, str, ...].
         """
-        return ""
+        table = f"{store_user_id}-{pos_number}-orderToken"
+        if token is str:
+            token = [token]
+        result = [self.__read_from_store_db(table, column_condition='orderToken', orderToken=tk) for tk in token]
+        if len(result) == 1:
+            return result[0]
+        else:
+            return tuple(result)
+
+    def register_user_order_token(self, store_user_id: str, pos_number: int,
+                                  customer_email: str, table_number: int) -> str | False:
+        """ Register user order token to store database.
+        """
+        table = f"{store_user_id}-{pos_number}-orderToken"
+        order_token = self.__read_from_store_db(table, column_condition=['userEmail', 'tableNumber'],
+                                                userEmail=customer_email, tableNumber=table_number)
+        if order_token:
+            return order_token[0]
+        else:
+            registered = self.__read_from_store_db(table, target='orderToken')
+            while True:
+                order_token = token_generator()
+                if order_token not in registered:
+                    break
+            result = self.__write_to_store_db(INS, table, orderToken=order_token,
+                                              userEmail=customer_email, tableNumber=table_number)
+            if not result:
+                return False
+            self.__store_database.commit()
+            return order_token
+
+    def acquire_store_info(self, user_id: str, pos_number: int, iso4217=False, business_registration_number=False,
+                           public_ip=False, wifi_password=False, gateway_ip=False, gateway_mac=False, pos_ip=False,
+                           pos_mac=False, pos_port=False, business_name=False, business_address=False,
+                           business_description=False, business_phone=False, business_profile_image=False,
+                           business_email=False, business_website=False, business_open_time=False,
+                           business_close_time=False, business_category=False, business_sub_category=False
+                           ) -> tuple[tuple] | None:
+        """ Acquire store information from store database. """
+        args = {'ISO4217': iso4217, 'businessRegistrationNumber': business_registration_number, 'publicIp': public_ip,
+                'wifiPassword': wifi_password, 'gatewayIp': gateway_ip, 'gatewayMac': gateway_mac, 'posIp': pos_ip,
+                'posMac': pos_mac, 'posPort': pos_port, 'businessName': business_name,
+                'businessAddress': business_address, 'businessDescription': business_description,
+                'businessPhoneNumber': business_phone, 'businessProfileImage': business_profile_image,
+                'businessEmail': business_email, 'businessWebsite': business_website,
+                'businessOpenTime': business_open_time, 'businessCloseTime': business_close_time,
+                'businessCategory': business_category, 'businessSubCategory': business_sub_category}
+        target = [key for key, value in args.items() if value]
+        table = f"{user_id}-{pos_number}-storeInfo"
+        return self.__read_from_store_db(table, target=target)
+
+    def register_store_info(self, user_id: str, pos_number: int, public_ip: str = None, wifi_password: str = None,
+                            gateway_ip: str = None, gateway_mac: str = None, pos_ip: str = None,
+                            pos_mac: str = None, pos_port: int = None, business_name: str = None,
+                            business_address: str = None, business_description: str = None,
+                            business_phone: str = None, business_profile_image: str = None,
+                            business_email: str = None, business_website: str = None, business_open_time: str = None,
+                            business_close_time: str = None, business_category: str = None,
+                            business_sub_category: str = None, init: bool = False, initializer: list = None) -> bool:
+        """ Register store information to user database.
+        If silent is true, this method will not update last access date.
+        If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
+        If init is true, this method will initialize user database.
+        """
+        kwargs: dict[str, str | int] = {}
+        if init:
+            if len(initializer) != 2:
+                raise ValueError("initializer must have 2 elements.")
+            initializer.sort(key=lambda x: len(x))
+            if len(initializer[0]) != 3 or len(initializer[1]) != 27:
+                raise ValueError("initializer elements' length error.")
+            kwargs['ISO4217'] = initializer[0]
+            kwargs['businessRegistrationNumber'] = initializer[1]
+        if pos_port is not None:
+            if pos_port:
+                if pos_port < 0 or pos_port > 65535:
+                    raise ValueError("Port must be between 0 and 65535.")
+                kwargs['posPort'] = pos_port
+            else:
+                kwargs['posPort'] = -1
+        args = {'publicIp': (public_ip, 100), 'wifiPassword': (wifi_password, self.MARIADB_VARCHAR_MAX),
+                'gatewayIp': (gateway_ip, 100), 'gatewayMac': (gateway_mac, 200), 'posIp': (pos_ip, 100),
+                'posMac': (pos_mac, 200), 'businessName': (business_name, 100),
+                'businessAddress': (business_address, 1000),
+                'businessDescription': (business_description, self.MARIADB_VARCHAR_MAX),
+                'businessPhoneNumber': (business_phone, 100),
+                'businessProfileImage': (business_profile_image, self.MARIADB_VARCHAR_MAX),
+                'businessEmail': (business_email, 1000), 'businessWebsite': (business_website, 10000),
+                'businessOpenTime': (business_open_time, 10000), 'businessCloseTime': (business_close_time, 10000),
+                'businessCategory': (business_category, 1000), 'businessSubCategory': (business_sub_category, 2000)}
+        for key, (val, length) in args.items():
+            if val is not None:
+                if val:
+                    if len(val) > length:
+                        raise ValueError(f"Length of {key} is too long.")
+                    kwargs[key] = val
+                else:
+                    kwargs[key] = ''
+        table = f"{user_id}-{pos_number}-storeInfo"
+        return self.__write_to_store_db(INS if init else UPD, table, **kwargs)
+
 
 
 
@@ -847,23 +839,6 @@ class ExclusiveDatabaseConnection(object):
         self.__connection = Connection(host=self.host, port=self.port, ssl_ca=self.__ssl_ca,
                                        user=self.__user_name, password=self.__password,
                                        db="exclusiveDatabase", charset='utf8')
-        """ Database Schema : db_name - table_name - column_name
-        exclusiveDatabase {
-            registeredPhoneNumberList {
-                phoneNumber : VARCHAR(100) | phone number  # to prevent duplicate phone numbers from being registered
-                userId : VARCHAR(40) | user id - (40 : user id length limit)
-                dbIpAddress : VARCHAR(100) | store database ip address
-            }
-            registeredBusinessLicenseNumberList {
-                identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
-                                                                                   from being registered
-                                                                                 # one identifier can be registered
-                                                                                   by one user
-                userId : VARCHAR(40) | user id - (40 : user id length limit)
-                dbIpAddress : VARCHAR(100) | store database ip address
-            }
-        }"""
-
         cur = self.__connection.cursor()
         sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (" \
               f"phoneNumber VARCHAR(100) {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
@@ -909,7 +884,7 @@ class ExclusiveDatabaseConnection(object):
         cur.close()
         self.__connection.commit()
 
-    def __read(self, table, column_condition, **kwargs) -> tuple[tuple] | None:
+    def __read(self, table, column_condition, **kwargs) -> tuple[tuple, ...] | None:
         """ Read from database.
         :param table: table name
         :param column_condition: column name | list or str
@@ -947,10 +922,10 @@ class ExclusiveDatabaseConnection(object):
             return original[1], original[2]
 
     def register_business_number(self, iso4217: str, business_registration_number: str,
-                                 user_id: str, dp_ip: str) -> bool:
+                                 user_id: str, dp_ip: str) -> True | tuple:
         """ Register business number.
-        If there is no duplicate phone number, just register the phone number.
-        If there is a duplicate phone number, do nothing and return False.
+        If there is no duplicate business number, just register the business number.
+        If there is a duplicate business number, do nothing and return original user's tuple.
         :return: True if there's no duplicate key | False if there's duplicate key
         :raise OSError: if database connection is not alive.
         """
@@ -969,7 +944,7 @@ class ExclusiveDatabaseConnection(object):
         #                                                                             # in the order of the db column.
         self.__set_mutex_unlock()
         if original:
-            return False
+            return original[0]
         return True
 
     def delete_registered_business_number(self, iso4217: str, business_registration_number: str) -> None:

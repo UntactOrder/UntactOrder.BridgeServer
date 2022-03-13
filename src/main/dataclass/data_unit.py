@@ -7,25 +7,26 @@ Reference : [caching] https://stackoverflow.com/questions/50866911/caching-in-me
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from __future__ import annotations
 
-from datetime import datetime
-now = datetime.now
 from threading import Timer
-from random import choice
-import string
 
 from functools import cached_property
 from cachetools.func import ttl_cache
 
 from iso4217 import Currency
 
+from datetime import datetime
+now = datetime.now
+
 if __name__ == '__main__':
-    from src.main.api.database_helper import DatabaseConnection, IS
+    from src.main.api.database_helper import DatabaseConnection, IS, gen_random_password
     import src.main.api.firebase_connector as fcon
-    from src.main.api.sso_provider import SSOProvider as sso
+    from src.main.api.sso_provider import SSOProvider as SSO
+    from src.main.api.store_informator import get_business_info
 else:
-    from api.database_helper import DatabaseConnection, IS
+    from api.database_helper import DatabaseConnection, IS, gen_random_password
     import api.firebase_connector as fcon
-    from api.sso_provider import SSOProvider as sso
+    from api.sso_provider import SSOProvider as SSO
+    from api.store_informator import get_business_info
 
 
 class CachableUnit(object):
@@ -34,7 +35,7 @@ class CachableUnit(object):
         * If the object is accessed again before the time limit, the object's remaining time is automatically extended.
         * When an object is deleted, this code does not guarantee that the object is deleted from memory.
         * * It only removes Alias, and after that, the garbage collector will completely erase the object from memory.
-        * * So, even if the object is in use elsewhere, it'll not be a problem to be removed from the cache of this code.
+        * * So, even if the object is in use elsewhere, it won't be a problem to be removed from the cache of this code.
     """
     __cache_max_size__ = 128  # max cache size
     __cache_max_time__ = 60 * 60 * 2  # max cache time (sec) - 2 hours
@@ -51,27 +52,18 @@ class User(object):
         with this class, you can get and set user data from user database or GitHub or firebase.
     """
 
-    @classmethod
-    def get_user_by_firebase_token(cls, firebase_token: str) -> User | None:
-        """ Get user by firebase user id and db ip by firebase ID token.
+    @staticmethod
+    def get_user_by_firebase_token(firebase_id_token: str) -> User | None:
+        """ Get user by firebase ID token.
             If the user has been disabled, an exception will be raised.
         """
         try:
-            email = fcon.get_user_by_token(firebase_token, app=None, check_revoked=True).email
+            email = fcon.get_user_by_token(firebase_id_token, app=None, check_revoked=True).email
             return User(*email.split('@'))
         except (fcon.auth.RevokedIdTokenError | fcon.auth.UserDisabledError):
             raise ValueError("User has been disabled.")
         except Exception:
             return None
-
-    @classmethod
-    def get_user_by_phone_number(cls, phone_number) -> User | None:
-        db_list = DatabaseConnection.get_instance()
-        for host, db in db_list.items():
-            registered_phone_number_list = db.get_registered_phone_number_list()
-            if phone_number in registered_phone_number_list:
-                return User(registered_phone_number_list[phone_number], host)
-        return None  # there's no user with this phone number.
 
     @staticmethod
     def sign_in_or_up(firebase_phone_auth_token: str, sso_token: str, sso_provider: str):
@@ -91,7 +83,7 @@ class User(object):
         del phone_auth
 
         # get sso login user info
-        user_info = sso.get_user_by_token(sso_token, sso_provider)
+        user_info = SSO.get_user_by_token(sso_token, sso_provider)
         user_id = sso_provider + '_' + user_info['unique_id']
 
         # db load balancing
@@ -124,18 +116,14 @@ class User(object):
         except fcon.auth.EmailAlreadyExistsError:  # user already exists
             is_new_user = False
             fuser = fcon.get_user_by_firebase_email(email)
-            fcon.update_user(fuser.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
-
-        # define password generator
-        def gen_random_password():
-            __LENGTH__ = 28
-            pool = string.ascii_letters + string.digits + string.punctuation
-            return "".join([choice(pool) for l in range(__LENGTH__)])
+            fcon.update_user(fuser.uid, password=password, display_name=nickname,
+                             photo_url=profile_image, disabled=False)
 
         # create or update user in database
         user = User(user_id, db.host)
         try:
-            if not user.update_user_info(legal_name, user_email, phone_number, age, gender, False, is_new_user):
+            if not user.update_user_info(legal_name=legal_name, user_email=user_email, phone=phone_number,
+                                         age=age, gender=gender, silent=False, init=is_new_user):
                 raise OSError("Database error: User creation failed.")
         except Exception as e:
             if is_new_user:
@@ -191,19 +179,17 @@ class User(object):
     def last_access_date(self) -> str:
         return self.db_connection.acquire_user_info(self.user_id, last_access_date=True)[0][0]
 
-    def update_user_info(self, legal_name: str = None, email: str = None, phone_number: str = None,
-                         age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
+    def update_user_info(self, **kwargs) -> bool:
         """ Update user info
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
         If init is true, this method will initialize user database.
         """
-        return self.db_connection.update_user_info(self.user_id,
-                                                   legal_name, email, phone_number, age, gender, silent, init)
+        return self.db_connection.update_user_info(self.user_id, **kwargs)
 
     @property
     def fcm_token(self) -> tuple[tuple[str, str], ...]:
-        return self.db_connection.accuire_fcm_tokens(self.user_id)
+        return self.db_connection.acquire_fcm_tokens(self.user_id)
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> bool:
         """ Put new fcm token to user database.
@@ -224,7 +210,7 @@ class User(object):
         if history is None:
             raise ValueError("No such order history.")
         business_name, total_price, dp_ip, pointer = history[0]
-        result = DatabaseConnection.get_instance(dp_ip).acquire_detailed_order_history(self.user_id, pointer)
+        result = DatabaseConnection.get_instance(dp_ip).acquire_order_history(pointer)
         if result is None:
             raise OSError("Database error: No such order history in order history database.")
         return (business_name, total_price, result), history
@@ -246,91 +232,130 @@ class Store(object):
         with this class, you can get and set user data from user store or GitHub.
     """
 
-    @classmethod
-    def get_store_by_id(cls, store_id):
-        if store_id not in cls.cached_stores:
-            store = Store.query.get(store_id)
-            Store.cached_stores[store_id] = store
-
-        return Store.cached_stores[store_id]
-
     @staticmethod
-    def get_store_list(firebase_id_token: str):
+    def get_store_list(firebase_id_token: str) -> list:
         """ Get user's store list by firebase id token. """
         user = User.get_user_by_firebase_id_token(firebase_id_token)
-        user.db_connection.acquire_store_list(user.user_id)
+        return user.db_connection.acquire_store_list(user.user_id)
 
     @staticmethod
-    def sign_up(firebase_id_token: str, business_registration_number: str, pos_number: int):
-        pass
+    def get_store_by_firebase_token(firebase_id_token: str, pos_number: int) -> Store | None:
+        """ Get user by firebase user id and db ip by firebase ID token. """
+        try:
+            email = fcon.get_user_by_token(firebase_id_token, app=None, check_revoked=False).email
+            return Store(*(*email.split('@'), pos_number))
+        except Exception:
+            return None
 
     @staticmethod
-    def sign_in_or_up(firebase_phone_auth_token: str, sso_token: str, sso_provider: str) -> User:
+    def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str) -> Store:
         """ Sign in or sign up method for client app login.
-        :raise ValueError: If the phone auth token is invalid.
+        :raise ValueError: Wrong firebase id token.
+        :raise ValueError: If store already exists.
         :raise ValueError: if monetary_unit_code is not valid
         :raise OSError: If database connection is lost.
+        !WARNING!: If someone repeatedly creates and deletes stores to prevent bridge server from operating smoothly,
+                   check the DB server's table change logs and take legal action.
         """
-        # get phone number from firebase phone auth token
-        try:
-            phone_auth = fcon.get_user_by_token(firebase_phone_auth_token)
-        except Exception:
-            raise ValueError("Invalid firebase phone auth token.")
-        phone_number = phone_auth.phone_number
+        # get user by firebase id token
+        user = User.get_user_by_firebase_token(firebase_id_token)
+        if user is None:
+            raise ValueError("Wrong Firebase token.")
 
-        # delete phone auth user
-        fcon.delete_user(phone_auth.uid)
-        del phone_auth
+        # check if business registration number is valid
+        iso4217 = iso4217.upper()
+        Currency(iso4217)  # check if the code is valid  ex: KRW, USD, JPY, EUR, GBP
+        business_info = get_business_info(business_registration_number, iso4217)
 
-        Currency(monetary_unit_code)  # check if the code is valid  ex: KRW, USD, JPY, EUR, GBP
-        # check duplicated phone number
+        # check if store already exists
+        store_list = user.db_connection.acquire_store_list(user.user_id)
+        for store in store_list:
+            if store == f"{user.user_id}-{pos_number}":
+                raise ValueError("Store already exists.")
 
+        # check duplicated business registration number
+        res = DatabaseConnection.exclusive.register_business_registration_number(iso4217, business_registration_number,
+                                                                                 user.user_id, user.db_ip)
+        if res is tuple:
+            if res[1] != user.user_id:
+                raise ValueError("Business registration number already exists.")
 
-        # get sso login user info
-        user_info = sso.get_user_by_token(sso_token, sso_provider)
+        # create store instance
+        store = Store(user.user_id, user.db_ip, pos_number)
 
-        # db load balancing
-        db = DatabaseConnection.load_balanced_get_instance()
-        if not db:
-            raise OSError("No database connection.")
+        # set store information
+        if not store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number]):
+            raise OSError("Database error: User creation failed.")
+        return store
 
-        # create or update firebase user
-        email = sso_provider + '_' + user_info['unique_id'] + '@' + db.host
-        password = sso_token
-        nickname = user_info['nickname']
-        profile_image = user_info['profile_image']
-        user_email = user_info['email']
-        gender = user_info['gender']
-        age = user_info['age']
-        if sso_provider == "naver":
-            legal_name = user_info['name']
-        try:
-            user = fcon.create_user(email=email, password=password, display_name=nickname, photo_url=profile_image)
-        except fcon.auth.EmailAlreadyExistsError:  # user already exists
-            user = fcon.get_user_by_firebase_email(email)
-            fcon.update_user(user.uid, password=password, display_name=nickname, photo_url=profile_image, disabled=False)
+    def __init__(self, user_id: str, db_ip: str, pos_number: int):
+        self.user_id = user_id
+        self.db_ip = db_ip
+        self.pos_number = pos_number
 
-        # create or update user in database
-        user = User(*email.split('@'))
+    @cached_property
+    def db_connection(self):
+        return DatabaseConnection.get_instance(self.db_ip)
 
-    def __init__(self, user_id: str, ):
-        self.business_license_number = None
-        self.user_id = None
-        self.pos_number = None
-        self.name = None
-        self.address = None
-        self.phone_number = None
-        self.email = None
-        self.is_active = None
-        self.is_admin = None
+    @cached_property
+    def email(self):
+        return self.user_id + '@' + self.db_ip
 
-    def get_customer_by_order_token(self, order_token):
-        """ Get customer by order token. """
-        return User.get_user_by_order_token(self.business_license_number, order_token)
+    @cached_property
+    def business_registration_number(self):
+        return self.db_connection.acquire_store_info(self.user_id, self.pos_number,
+                                                     business_registration_number=True)[0][0]
 
-    def get_pos_menu_list(self):
-        """ Get pos menu list. """
+    @cached_property
+    def iso4217(self):
+        return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True)[0][0]
+
+    def get_store_common_info(self):
+        """ Get store's common information. """
+        return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True,
+                                                     business_registration_number=True, business_name=True,
+                                                     business_address=True, business_description=True,
+                                                     business_phone=True, business_profile_image=True,
+                                                     business_email=True, business_website=True,
+                                                     business_open_time=True, business_close_time=True,
+                                                     business_category=True, business_sub_category=True)
+
+    def get_store_pos_info(self):
+        """ Get store's pos information. """
+        return self.db_connection.acquire_pos_info(self.user_id, self.pos_number, public_ip=True, wifi_password=True,
+                                                   gateway_ip=True, gateway_mac=True, pos_ip=True,
+                                                   pos_mac=True, pos_port=True)
+
+    def update_store_info(self, **kwargs) -> bool:
+        """ Update store information. """
+        return self.db_connection.update_store_info(self.user_id, self.pos_number, **kwargs)
+
+    def get_store_item_list(self):
+        """ Get store item list. """
         pass
+
+    def update_store_item_list(self, **kwargs):
+        """ Update store item list. """
+        pass
+
+    def get_store_table_string(self):
+        """ Get store table list. """
+        pass
+
+    def add_new_table(self, amount: int = 1):
+        """ Add new table. """
+        pass
+
+    @property
+    def fcm_token(self) -> tuple[tuple[str, str], ...]:
+        return self.db_connection.acquire_fcm_tokens(self.user_id, self.pos_number)
+
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+        """ Put new fcm token to store database.
+        :param fcm_token: Firebase Cloud Messaging token.
+        :param flush: If true, flush the old(that have been registered for two days) token.
+        """
+        self.db_connection.put_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
     def set_new_order_history(self, customer_emails: list, total_price: int,
                               table_number: int, order_history: list[list]):
@@ -346,18 +371,10 @@ class Store(object):
 
         return result
 
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
-        """ Put new fcm token to store database.
-        :param fcm_token: Firebase Cloud Messaging token.
-        :param flush: If true, flush the old(that have been registered for two days) token.
-        """
-        self.db_connection.put_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
-
-
-
     def delete_store(self):
         """ Delete store. """
         result = self.db_connection.delete_store(self.user_id, self.pos_number)
         user = User(*self.email.split('@'))
         if user.db_connection.acquire_store_list(user.user_id) is None:
             DatabaseConnection.exclusive.delete_store(self.iso4217, self.business_registration_number)
+        return result
