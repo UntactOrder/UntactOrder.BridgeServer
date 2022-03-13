@@ -22,17 +22,12 @@ SHW_DBS = "SHOW DATABASES"
 SHW_TBS = "SHOW TABLES"
 SHW_TB_STAT = "SHOW TABLE STATUS"
 CRE_TB = "CREATE TABLE"
-
-NNUL = "NOT NULL"
-DFT = "DEFAULT"
-
-SEL = "SELECT"
-INS = "INSERT"
-UPD = "UPDATE"
-DEL = "DELETE"
-
 TRN_TB = "TRUNCATE TABLE"  # re-create table
 DRP_TB = "DROP TABLE"  # delete table
+
+NNUL, DFT = "NOT NULL", "DEFAULT"
+
+SEL, INS, UPD, DEL = "SELECT", "INSERT", "UPDATE", "DELETE"
 
 FRM = "FROM"  # for SELECT
 ITO = "INTO"  # for INSERT
@@ -40,16 +35,11 @@ SET = "SET"  # for UPDATE
 WHR = "WHERE"
 VAL = "VALUES"
 
-IS = "="
-NOT = "<>"
-GT = ">"
-LT = "<"
-GTE = ">="
-LTE = "<="
+IS, NOT, GT, LT, GTE, LTE = "=", "<>", ">", "<", ">=", "<="
 
 AL = "*"
 
-__V = lambda value: f"{value}" if value is int else f"'{value}'"
+_V_ = lambda value: f"{value}" if value is int else f"'{value}'"
 # -----------------------------------------------------------------------------
 
 
@@ -108,8 +98,8 @@ class DatabaseConnection(object):
 
         class PAY(object):
             min_, max_ = 0, 12
-            etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,\
-            phone_pay, wechat_pay, ali_pay, jtnet_pay = range(min_, max_+1)
+            (etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,
+             phone_pay, wechat_pay, ali_pay, jtnet_pay) = range(min_, max_+1)
 
     # exclusive database
     exclusive = None
@@ -260,7 +250,6 @@ class DatabaseConnection(object):
         :param kwargs: column value | list or str
                        operator - where operator | str
         """
-        global __V
         opr = kwargs.pop('operator', IS)
 
         target_table = table
@@ -273,7 +262,7 @@ class DatabaseConnection(object):
 
         sql = f"{SEL} {query_target} {FRM} {target_table}"
         if target_val:
-            sql += f" {WHR} " + " AND ".join([f"{col}{opr}{__V(val)}" for col, val in zip(target_col, target_val)])
+            sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
         sql += ';'
         return sql
 
@@ -286,7 +275,6 @@ class DatabaseConnection(object):
         :param kwargs: column value | list or str
                        operator - where operator | str
         """
-        global __V
         opr = kwargs.pop('operator', IS)
 
         if query == INS:
@@ -301,7 +289,7 @@ class DatabaseConnection(object):
             else:
                 sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
             if target_val:
-                sql += f" {WHR} " + " AND ".join([f"{col}{opr}{__V(val)}" for col, val in zip(target_col, target_val)])
+                sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
             sql += ';'
         elif query in (TRN_TB, DRP_TB):
             sql = query + ' ' + table + ';'
@@ -433,21 +421,11 @@ class DatabaseConnection(object):
         """ Acquire user information from user database. """
         if not legal_name and not email and not phone and not age and not gender and not last_access_date:
             legal_name = email = phone = age = gender = last_access_date = True
-        target = []
-        if legal_name:
-            target.append('legalName')
-        if email:
-            target.append('email')
-        if phone:
-            target.append('phone')
-        if age:
-            target.append('age')
-        if gender:
-            target.append('gender')
-        if last_access_date:
-            target.append('lastAccessDate')
+        args = {'legalName': legal_name, 'email': email, 'phone': phone,
+                'age': age, 'gender': gender, 'lastAccessDate': last_access_date}
+        target = [key for key, value in args.items() if value]
         table = user_id + '-' + 'userInfo'
-        return self.__read_from_user_db(table, target=target)
+        return self.__read_from_user_db(table, target=target if not target else list(args.keys()))
 
     def register_user_info(self, user_id: str, legal_name: str = None, email: str = None, phone: str = None,
                            age: int = None, gender: int = None, silent: bool = False, init: bool = False) -> bool:
@@ -459,33 +437,17 @@ class DatabaseConnection(object):
         kwargs: dict[str, str | int] = {}
         upd_his = []
         del_his = []
-        if legal_name is not None:
-            if legal_name:
-                if len(legal_name) > 100:
-                    raise ValueError("Length of legal name is too long.")
-                kwargs['legalName'] = legal_name
-                upd_his.append(f"legalName='{legal_name}'")
-            else:
-                kwargs['legalName'] = ''
-                upd_his.append("legalName")
-        if email is not None:
-            if email:
-                if len(email) > 200:
-                    raise ValueError("Length of email is too long.")
-                kwargs['email'] = email
-                upd_his.append(f"email='{email}'")
-            else:
-                kwargs['email'] = ''
-                upd_his.append("email")
-        if phone is not None:
-            if phone:
-                if len(phone) > 100:
-                    raise ValueError("Length of phone number is too long.")
-                kwargs['phone'] = phone
-                upd_his.append(f"phone='{phone}'")
-            else:
-                kwargs['phone'] = ''
-                upd_his.append("phone")
+        args = {'legalName': (legal_name, 100), 'email': (email, 200), 'phone': (phone, 100)}
+        for key, (val, length) in args.items():
+            if val is not None:
+                if val:
+                    if len(val) > length:
+                        raise ValueError(f"Length of {key} is too long.")
+                    kwargs[key] = val
+                    upd_his.append(f"{key}='{val}'")
+                else:
+                    kwargs[key] = ''
+                    del_his.append(key)
         if age is not None:
             if age:
                 if age < 0:
@@ -511,14 +473,12 @@ class DatabaseConnection(object):
             table = user_id + '-' + 'alterHis'
             upd_log = [f"{INS if init else UPD} " + ", ".join(upd_his)]
             while len(upd_log[-1]) > self.MARIADB_VARCHAR_MAX:
-                head = upd_log[-1][:self.MARIADB_VARCHAR_MAX]
-                foot = upd_log[-1][self.MARIADB_VARCHAR_MAX:]
+                head, foot = upd_log[-1][:self.MARIADB_VARCHAR_MAX], upd_log[-1][self.MARIADB_VARCHAR_MAX:]
                 upd_log[-1] = head
                 upd_log.append(foot)
             del_log = [f"{DEL} " + ", ".join(del_his)]
             while len(del_log[-1]) > self.MARIADB_VARCHAR_MAX:
-                head = del_log[-1][:self.MARIADB_VARCHAR_MAX]
-                foot = del_log[-1][self.MARIADB_VARCHAR_MAX:]
+                head, foot = del_log[-1][:self.MARIADB_VARCHAR_MAX], del_log[-1][self.MARIADB_VARCHAR_MAX:]
                 del_log[-1] = head
                 del_log.append(foot)
             result = [self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
@@ -620,11 +580,7 @@ class DatabaseConnection(object):
         """ Register order history to order history database.
         :param pointer: order history database table name
         :param order_history: order history | list[list, ...]
-        [
-            [firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],
-            [firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],
-            ...
-        ]
+        [[firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],...]
         """
         zipper = zip(*order_history)
         firebase_uids = list(next(zipper))
@@ -636,14 +592,8 @@ class DatabaseConnection(object):
         payment_methods = list(next(zipper))
         if [True for method in payment_methods if method > self.HIS.PAY.max_ or method < self.HIS.PAY.min_]:
             raise ValueError("Payment method is out of range.")
-        menu_names = list(next(zipper))
-        # if [True for name in menu_names if len(name) > 300]:
-        #    raise ValueError("Length of menu name is too long.")
-        # we don't need to check length of menu name because it is from our database
-        menu_prices = list(next(zipper))
-        # if [True for price in menu_prices if price > self.MARIADB_INT_MAX or price < self.MARIADB_INT_MIN]:
-        #    raise ValueError("Menu price is out of range.")
-        # for the same reason as the menu name, we don't need to check the length of menu price.
+        menu_names = list(next(zipper))  # we don't need to check length of menu name because it is from our database.
+        menu_prices = list(next(zipper))  # for the same reason as the menu name, we don't need to check the length.
         menu_quantities = list(next(zipper))
         if [True for quantity in menu_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
             raise ValueError("Menu quantity is out of range.")
@@ -668,7 +618,7 @@ class DatabaseConnection(object):
                                     ) -> tuple[str, str, str] | tuple[tuple[str, str, str]] | None | tuple[None, ...]:
         """ Acquire user order token from store database.
         :return: order token | if token is not registered, return None.
-                               if token is list and some token is not registered, return tuple[str, ..., None, str, ...].
+                               if token is list and some token is not registered, return tuple[str, ..., None, ...].
         """
         table = f"{store_user_id}-{pos_number}-orderToken"
         if token is str:
