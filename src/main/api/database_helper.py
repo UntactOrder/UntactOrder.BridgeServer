@@ -91,19 +91,11 @@ class DatabaseConnection(object):
     # userDatabase
     class USR(object):
         class GENDER(object):
-            male = 1
-            female = 2
-            neutral = 3
-            etc = 4
-            none = 0
-
-            max_ = etc
-            min_ = none
+            min_, max_ = 0, 4
+            none, male, female, neutral, etc = range(min_, max_+1)
 
         class ALT(object):
-            insert = 0
-            update = 1
-            delete = 2
+            insert, update, delete = range(3)
     #
     # storeDatabase
 
@@ -111,32 +103,13 @@ class DatabaseConnection(object):
     # orderHistoryDatabase
     class HIS(object):
         class STAT(object):
-            ordered = 0
-            paid = 1
-            cancelled = 2
-            delivered = 3
-            returned = 4
-
-            max_ = returned
-            min_ = ordered
+            min_, max_ = 0, 4
+            ordered, paid, cancelled, delivered, returned = range(min_, max_+1)
 
         class PAY(object):
-            etc = 0
-            cash = 1
-            card = 2
-            kakao_pay = 3
-            naver_pay = 4
-            payco = 5
-            zero_pay = 6
-            paypal = 7
-            paytm = 8
-            phone_pay = 9
-            wechat_pay = 10
-            ali_pay = 11
-            jtnet_pay = 12
-
-            max_ = jtnet_pay
-            min_ = etc
+            min_, max_ = 0, 12
+            etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,\
+            phone_pay, wechat_pay, ali_pay, jtnet_pay = range(min_, max_+1)
 
     # exclusive database
     exclusive = None
