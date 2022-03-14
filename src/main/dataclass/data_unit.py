@@ -186,7 +186,7 @@ class User(object):
     def last_access_date(self) -> str:
         return self.db_connection.acquire_user_info(self.user_id, last_access_date=True)[0][0]
 
-    def update_user_info(self, **kwargs) -> bool:
+    def update_user_info(self, **kwargs) -> int:
         """ Update user info
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
@@ -198,7 +198,7 @@ class User(object):
     def fcm_token(self) ->  tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id)
 
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> bool:
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> int:
         """ Put new fcm token to user database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two month) token.
@@ -222,11 +222,11 @@ class User(object):
             raise OSError("Database error: No such order history in order history database.")
         return (business_name, total_price, result), history
 
-    def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> bool:
+    def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
         """ This method will be called by Store object. """
         return self.db_connection.register_user_order_history(self.user_id, business_name, total_price, db_ip, pointer)
 
-    def delete_user(self) -> bool:
+    def delete_user(self) -> int:
         """ Delete user from database. """
         result = self.db_connection.delete_user(self.user_id)
         fcon.delete_user(self.user_id)
@@ -280,22 +280,30 @@ class Store(object):
 
     @staticmethod
     def get_order_token_by_table_string(customer_firebase_id_token: str, identifier: str,
-                                        encrypted_msg: str) -> str | False:
+                                        encrypted_msg: str) -> str:
         """ Get order token by table string. """
-        cus, store, table_string = Store.access_store_by_identifier(customer_firebase_id_token, identifier)
-        table_number = store.(table_string)
+        cus, store, t_str = Store.__access_store_by_identifier(customer_firebase_id_token, identifier, encrypted_msg)
+        table_number = store.get_store_table_list(t_str)
         if table_number is None:
             raise ValueError("No such table.")
-        return db_con.register_user_order_token(store_user_id, pos_number, cu.email, table_number)
+        return store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
 
     @staticmethod
-    def get_store_info(customer_firebase_id_token: str, identifier: str, pos_number: int) -> tuple:
+    def get_store_info(customer_firebase_id_token: str, identifier: str, encrypted_msg: str, info_type: str) -> tuple:
         """ Get store common info. """
-        cu, store_user_id, db_con = Store.access_store_by_identifier(customer_firebase_id_token, identifier)
-        store_info = db_con.acquire_store_info(store_user_id, pos_number)
-        if store_info is None:
-            raise ValueError("No such store.")
-        return store_info
+        cus, store, t_str = Store.__access_store_by_identifier(customer_firebase_id_token, identifier, encrypted_msg)
+        match info_type:
+            case "common":
+                result = store.get_store_common_info()
+            case "pos":
+                result = store.get_store_pos_info()
+            case "item":
+                result = store.get_store_item_list()
+            case _:
+                raise ValueError("Invalid info type.")
+        if result is None:
+            raise RuntimeError("No data found.")
+        return result
 
     @staticmethod
     def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str) -> Store:
@@ -372,28 +380,28 @@ class Store(object):
 
     def get_store_pos_info(self) -> tuple | None:
         """ Get store's pos information. """
-        return self.db_connection.acquire_pos_info(self.user_id, self.pos_number, public_ip=True, wifi_password=True,
-                                                   gateway_ip=True, gateway_mac=True, pos_ip=True,
-                                                   pos_mac=True, pos_port=True)
+        return self.db_connection.acquire_store_info(self.user_id, self.pos_number, public_ip=True, wifi_password=True,
+                                                     gateway_ip=True, gateway_mac=True, pos_ip=True,
+                                                     pos_mac=True, pos_port=True)
 
-    def update_store_info(self, **kwargs) -> bool:
+    def update_store_info(self, **kwargs) -> int:
         """ Update store information. """
-        return self.db_connection.update_store_info(self.user_id, self.pos_number, **kwargs)
+        return self.db_connection.register_store_info(self.user_id, self.pos_number, **kwargs)
 
     def get_store_item_list(self) -> tuple | None:
         """ Get store item list. """
-        return self.db_connection.acquire_item_list(self.user_id, self.pos_number)
+        return self.db_connection.acquire_store_item_list(self.user_id, self.pos_number)
 
-    def update_store_item_list(self, new_list: list = None, update_list: list = None) -> bool:
+    def update_store_item_list(self, new_list: list = None, update_list: list = None) -> int:
         """ Update store item list. """
-        return self.db_connection.update_item_list(self.user_id, self.pos_number, new_list, update_list)
+        return self.db_connection.register_store_item_list(self.user_id, self.pos_number, new_list, update_list)
 
     def get_store_table_list(self, table_string: str = None) -> int | tuple[tuple] | None:
         """ Get store table list.
         :param table_string: if table string is not None, return table number of table string.
                              if None, return all table list.
         """
-        return self.db_connection.acquire_store_table_list(self.user_id, self.pos_number, table_string)
+        return self.db_connection.acquire_store_item_list(self.user_id, self.pos_number, table_string)
 
     def get_store_qr_code(self, table_string: str = None, check_validity: bool = True) -> str | None:
         """ Get store QR code. """
@@ -403,9 +411,10 @@ class Store(object):
         enc = AES256CBC.get_instance('qr').encrypt(f"{self.pos_number}-{table_string}", self.aes_iv)
         return fcon.DynamicLink.get_store_qr_dynamic_link(f"{self.iso4217}-{self.business_registration_number}", enc)
 
-    def add_new_table(self, amount: int = 1) -> bool:
+    def add_new_table(self, amount: int = 1) -> True:
         """ Add new table. """
-        return self.db_connection.register_new_table(self.user_id, self.pos_number, amount)
+        self.db_connection.register_new_table(self.user_id, self.pos_number, amount)
+        return True
 
     @property
     def fcm_token(self) -> tuple[str, ...]:
@@ -419,17 +428,17 @@ class Store(object):
         self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
     def set_new_order_history(self, customer_emails: list, total_price: int,
-                              table_number: int, order_history: list[list]):
+                              table_number: int, order_history: list[list]) -> int:
         """ Set new order history. """
         table = f"{self.iso4217}_{self.business_registration_number}" \
                 f"_{self.pos_number}_{table_number}_{now().strftime('%Y%m%d_%H%M%S%f')}"
-
-        result
-
-        for customer in customer_emails:
-            user = User(*customer.split('@'))
-            user.set_new_order_history(self.business_name, total_price, db_ip, table)
-
+        result = self.db_connection.register_order_history(table, order_history)
+        tokens = []
+        for cus in customer_emails:
+            user = User(*cus.split('@'))
+            tokens.extend(user.fcm_token)
+            user.set_new_order_history(self.business_name, total_price, self.db_ip, table)
+        fcon.send_cloud_message(tokens, table)
         return result
 
     def delete_store(self):

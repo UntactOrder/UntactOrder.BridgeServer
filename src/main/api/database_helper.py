@@ -574,8 +574,9 @@ class DatabaseConnection(object):
         order_token = self.__read_from_store_db(table, column_condition=['userEmail', 'tableNumber'],
                                                 userEmail=customer_email, tableNumber=table_number)
         if order_token:
-            return order_token[0]
+            return order_token[0][0]
         else:
+            result = 0
             for _ in range(3):  # try 3 times max
                 order_token = gen_order_token()
                 result = self.__write_to_store_db(INSIG, table, orderToken=order_token,
