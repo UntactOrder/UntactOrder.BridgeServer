@@ -323,11 +323,8 @@ class Store(object):
             raise ValueError("Store already exists.")
 
         # check duplicated business registration number
-        res = DatabaseConnection.exclusive.register_business_registration_number(iso4217, business_registration_number,
-                                                                                 user.user_id, user.db_ip)
-        if res is tuple:
-            if res[1] != user.user_id:
-                raise ValueError("Business registration number already exists.")
+        res = DatabaseConnection.exclusive.register_business_number(iso4217, business_registration_number,
+                                                                    user.user_id, user.db_ip)
 
         # create store instance
         store = Store(user.user_id, user.db_ip, pos_number)

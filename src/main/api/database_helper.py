@@ -231,11 +231,14 @@ class DatabaseConnection(object):
         """
         opr = kwargs.pop('operator', IS)
 
-        if query in (INS, INSIG, REP):
+        if query in (INS, INSIG, REP, ONDUP):
             kwargs = {key: [val] if val is not list else val for key, val in kwargs.items()}
             values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
-            sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ");"
-        elif query in (UPD, DEL, ONDUP):
+            sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ')'
+            if query == ONDUP:
+                target_col = column_condition if column_condition is list else [column_condition]
+                sql += f" {ONDUP} " + ", ".join([f"{col}=VALUES({col})" for col in target_col]) + ')'
+        elif query in (UPD, DEL):
             target_col = column_condition if column_condition is list else [column_condition]
             target_val = [kwargs.pop(col) for col in target_col]
             if query == UPD:
@@ -244,13 +247,12 @@ class DatabaseConnection(object):
                 sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
             if target_val:
                 sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
-            sql += ';'
         elif query in (TRN_TB, DRP_TB):
-            sql = query + ' ' + table + ';'
+            sql = query + ' ' + table
         else:
             raise ValueError("Invalid query method.")
 
-        return sql
+        return sql + ';'
 
     def __read(self, db, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
         if column_condition is None:
@@ -754,32 +756,13 @@ class ExclusiveDatabaseConnection(object):
 
     def check_db_connection(self, func):
         """ Check if database connection is alive. And if not, reconnect. """
-        def check_ping():
+        def check_ping():  # TODO: check if this method slows down the server.
             try:
                 self.__connection.ping(reconnect=True)
             except Exception as e:
                 raise OSError("Database connection is not alive. Cannot proceed:", e)
             return func
         return check_ping
-
-    def __set_mutex_lock(self, *args, **kwargs):
-        """ Set exclusive lock on the database.
-        :return: True if success, False if failed.
-        """
-        # TODO: implement this method
-        pass
-
-    def __set_mutex_unlock(self, *args, **kwargs):
-        """ Unlock the mutex. """
-        # TODO: implement this method
-        pass
-
-    def __check_mutex_status(self, *args, **kwargs):
-        """ Check the mutex status.
-        :return: True if locked | False if unlocked
-        """
-        # TODO: implement this method
-        pass
 
     def __write(self, query, table, column_condition, **kwargs) -> int:
         """ Write to database.
@@ -816,42 +799,29 @@ class ExclusiveDatabaseConnection(object):
                                               and return the original user value.
         :return: None if there's no duplicate key | (user_id, db_ip_address) if there's duplicate key
         """
-        while self.__check_mutex_status():
-            pass  # TODO: check if sleep is needed.
-        while not self.__set_mutex_lock():
-            pass
         original = self.__read(table='registeredPhoneNumberList', column_condition='phoneNumber', phoneNumber=phone)[0]
         if original is None or original[1] != new_user_id:
-            query = INS if original is None else UPD
+            query = INS if original is None else UPD  # TODO: make sure this doesn't create a duplicate problem
             self.__write(query=query, table='registeredPhoneNumberList', column_condition='phoneNumber',
                          phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
         self.__connection.commit()
-        self.__set_mutex_unlock()
         if not original and original[1] != new_user_id:
             return original[1], original[2]
 
     @check_db_connection
     def register_business_number(self, iso4217: str, business_registration_number: str,
-                                 user_id: str, dp_ip: str) -> True | tuple:
+                                 user_id: str, dp_ip: str):
         """ Register business number.
         If there is no duplicate business number, just register the business number.
         If there is a duplicate business number, do nothing and return original user's tuple.
-        :return: True if there's no duplicate key | False if there's duplicate key
+        :raise ValueError: if the business number is already registered by another user.
         """
         identifier = iso4217 + '-' + business_registration_number
-        while self.__check_mutex_status():
-            pass
-        while not self.__set_mutex_lock():
-            pass
-        original = self.__read(table='registeredBusinessLicenseNumberList', column_condition='identifier',
-                               identifier=identifier)
-        if original is None:
-            self.__write(query=INS, table='registeredBusinessLicenseNumberList', column_condition='identifier',
-                         identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
-        #                                                                             # in the order of the db column.
+        result = self.__write(query=INSIG, table='registeredBusinessLicenseNumberList', column_condition='identifier',
+                              identifier=identifier, userId=user_id, dbIpAddress=dp_ip)
+        if result == 0:
+            raise ValueError("Business registration number already exists.")
         self.__connection.commit()
-        self.__set_mutex_unlock()
-        return original[0] if original else True
 
     @check_db_connection
     def acquire_store_by_identifier_without_mutex(self, identifier: str) -> tuple | None:
@@ -870,11 +840,6 @@ class ExclusiveDatabaseConnection(object):
         :param business_registration_number: business registration number
         """
         identifier = iso4217 + '-' + business_registration_number
-        while self.__check_mutex_status():
-            pass
-        while not self.__set_mutex_lock():
-            pass
         self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='identifier',
                      identifier=identifier)
         self.__connection.commit()
-        self.__set_mutex_unlock()
