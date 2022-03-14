@@ -10,7 +10,6 @@ from __future__ import annotations
 from threading import Timer
 from random import choice
 import string
-from typing import Tuple
 
 from pymysql import Connection
 
@@ -737,7 +736,6 @@ class DatabaseConnection(object):
         """
         table = f"{store_user_id}-{pos_number}-tableAlias"
         opr = INS
-        index = []
         while True:
             # get registered table strings
             r_indx, r_str = zip(*self.acquire_store_table_list(store_user_id, pos_number))
@@ -746,15 +744,18 @@ class DatabaseConnection(object):
             result_indx = []
             if not result or not []:
 
+
+            # get registered table strings
+            r_indx, r_str = zip(*self.acquire_store_table_list(store_user_id, pos_number))
             # gen table strings
             table_strings = set()
             while True:
-                if len(table_strings) == amount:
-                    break
                 table_strings.update({gen_table_string() for _ in range(amount-len(table_strings))})
-
-
-        result = self.__write_to_store_db(INS, table, **kwargs)
+                table_strings.difference_update(r_str)
+                if len(table_strings) == amount:
+                    table_strings = list(table_strings)
+                    break
+            result = self.__write_to_store_db(INS, table, tableString=table_strings)
 
     def delete_user(self, user_id: str) -> bool:
         """ Delete user from user database. """
