@@ -349,8 +349,8 @@ class DatabaseConnection(object):
         if 'userInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"AESIV VARCHAR(50) {NNUL}, legalName VARCHAR(100) {NNUL} {DFT} '', " \
-                  f"email VARCHAR(200) {NNUL} {DFT} '', phone VARCHAR(100) {NNUL}, age TINYINT {NNUL} {DFT} 0, " \
-                  f"gender TINYINT {NNUL} {DFT} {self.USR.GENDER.none}, lastAccessDate VARCHAR(30) {NNUL});"
+                  f"email VARCHAR(200) {NNUL} {DFT} '', phone VARCHAR(100) {NNUL}, age TINYINT {NNUL} {DFT} -1, " \
+                  f"gender TINYINT {NNUL} {DFT} -1, lastAccessDate VARCHAR(30) {NNUL});"
         elif 'alterHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"alterDateTime VARCHAR(30) {NNUL}, alterType TINYINT {NNUL} {DFT} 0, " \
@@ -434,56 +434,39 @@ class DatabaseConnection(object):
         kwargs: dict[str, str | int] = {}
         upd_his = []
         del_his = []
-        args = {'legalName': (legal_name, 100), 'email': (email, 200), 'phone': (phone, 100)}
+        args = {'legalName': (legal_name, None, 100), 'email': (email, None, 200), 'phone': (phone, None, 100),
+                'age': (age, 0, self.MARIADB_INT_MAX), 'gender': (gender, self.USR.GENDER.min_, self.USR.GENDER.max_)}
         if init:
-            args['AESIV'] = (aes_iv, 50)
-        for key, (val, length) in args.items():
+            args['AESIV'] = (aes_iv, None, 50)
+        for key, (val, min_, max_) in args.items():
             if val is not None:
                 if val:
-                    if len(val) > length:
-                        raise ValueError(f"Length of {key} is too long.")
+                    if min_ is None:
+                        if len(val) > max_:
+                            raise ValueError(f"Length of {key} is too long.")
+                    else:
+                        if val < min_ or val > max_:
+                            raise ValueError(f"{key} must be between {min_} and {max_}.")
                     kwargs[key] = val
-                    upd_his.append(f"{key}='{val}'")
+                    upd_his.append(f"{key}={_V_(val)}")
                 else:
-                    kwargs[key] = ''
+                    kwargs[key] = '' if min_ is None else -1
                     del_his.append(key)
-        if age is not None:
-            if age:
-                if age < 0:
-                    raise ValueError("Age is negative.")
-                kwargs['age'] = age
-                upd_his.append(f"age={age}")
-            else:
-                kwargs['age'] = 0
-                upd_his.append("age")
-        if gender is not None:
-            if gender:
-                if gender < self.USR.GENDER.min_ or gender > self.USR.GENDER.max_:
-                    raise ValueError(f"Gender must be {self.USR.GENDER.min_}~{self.USR.GENDER.max_}")
-                kwargs['gender'] = gender
-                upd_his.append(f"gender='{gender}'")
-            else:
-                kwargs['gender'] = self.USR.GENDER.none
-                upd_his.append("gender")
         if not silent:
             kwargs['lastAccessDate'] = now().strftime("%Y-%m-%d")
         table = user_id + '-' + 'userInfo'
         if self.__write_to_user_db(INS if init else UPD, table, **kwargs):
             table = user_id + '-' + 'alterHis'
             upd_log = [f"{INS if init else UPD} " + ", ".join(upd_his)]
-            while len(upd_log[-1]) > self.MARIADB_VARCHAR_MAX:
-                head, foot = upd_log[-1][:self.MARIADB_VARCHAR_MAX], upd_log[-1][self.MARIADB_VARCHAR_MAX:]
-                upd_log[-1] = head
-                upd_log.append(foot)
             del_log = [f"{DEL} " + ", ".join(del_his)]
-            while len(del_log[-1]) > self.MARIADB_VARCHAR_MAX:
-                head, foot = del_log[-1][:self.MARIADB_VARCHAR_MAX], del_log[-1][self.MARIADB_VARCHAR_MAX:]
-                del_log[-1] = head
-                del_log.append(foot)
-            result = [self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
-                                              alterType=self.USR.ALT.update, alterLogMessage=msg) for msg in upd_log]
-            result.extend([self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
-                                                   alterType=self.USR.ALT.delete, alterLogMessage=m) for m in del_log])
+            result = []
+            for log_type, alt_type in ((upd_log, self.USR.ALT.update), (del_log, self.USR.ALT.delete)):
+                while len(log_type[-1]) > self.MARIADB_VARCHAR_MAX:
+                    head, foot = log_type[-1][:self.MARIADB_VARCHAR_MAX], log_type[-1][self.MARIADB_VARCHAR_MAX:]
+                    log_type[-1] = head
+                    log_type.append(foot)
+                result.extend([self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
+                                                       alterType=alt_type, alterLogMessage=msg) for msg in log_type])
             if False not in result:
                 self.__user_database.commit()
                 return True
@@ -692,32 +675,29 @@ class DatabaseConnection(object):
                 raise ValueError("initializer elements' length error.")
             kwargs['ISO4217'] = initializer[0]
             kwargs['businessRegistrationNumber'] = initializer[1]
-        args = {'posPort': (pos_port, 0, 65535), 'businessZipCode': (business_zip_code, 0, self.MARIADB_INT_MAX)}
-        for key, (val, min_, max_) in args.items():
+        n = None
+        ag = {'publicIp': (public_ip, n, 100), 'wifiPassword': (wifi_password, n, self.MARIADB_VARCHAR_MAX),
+              'gatewayIp': (gateway_ip, n, 100), 'gatewayMac': (gateway_mac, n, 200), 'posIp': (pos_ip, n, 100),
+              'posMac': (pos_mac, n, 200), 'posPort': (pos_port, 0, 65535), 'businessName': (business_name, n, 100),
+              'businessAddress': (business_address, n, 1000), 'businessPhoneNumber': (business_phone, n, 100),
+              'businessZipCode': (business_zip_code, 0, self.MARIADB_INT_MAX),
+              'businessDescription': (business_description, n, self.MARIADB_VARCHAR_MAX),
+              'businessProfileImage': (business_profile_image, n, self.MARIADB_VARCHAR_MAX),
+              'businessEmail': (business_email, n, 1000), 'businessWebsite': (business_website, n, 10000),
+              'businessOpenTime': (business_open_time, n, 10000), 'businessCloseTime': (business_close_time, n, 10000),
+              'businessCategory': (business_category, n, 1000), 'businessSubCategory': (business_sub_category, n, 2000)}
+        for key, (val, min_, max_) in ag.items():
             if val is not None:
                 if val:
-                    if pos_port < min_ or pos_port > max_:
-                        raise ValueError(f"{key} must be between {min_} and {max_}.")
+                    if min_ is None:
+                        if len(val) > max_:
+                            raise ValueError(f"Length of {key} is too long.")
+                    else:
+                        if val < min_ or val > max_:
+                            raise ValueError(f"{key} must be between {min_} and {max_}.")
                     kwargs[key] = val
                 else:
-                    kwargs[key] = -1
-        args = {'publicIp': (public_ip, 100), 'wifiPassword': (wifi_password, self.MARIADB_VARCHAR_MAX),
-                'gatewayIp': (gateway_ip, 100), 'gatewayMac': (gateway_mac, 200), 'posIp': (pos_ip, 100),
-                'posMac': (pos_mac, 200), 'businessName': (business_name, 100),
-                'businessAddress': (business_address, 1000), 'businessPhoneNumber': (business_phone, 100),
-                'businessDescription': (business_description, self.MARIADB_VARCHAR_MAX),
-                'businessProfileImage': (business_profile_image, self.MARIADB_VARCHAR_MAX),
-                'businessEmail': (business_email, 1000), 'businessWebsite': (business_website, 10000),
-                'businessOpenTime': (business_open_time, 10000), 'businessCloseTime': (business_close_time, 10000),
-                'businessCategory': (business_category, 1000), 'businessSubCategory': (business_sub_category, 2000)}
-        for key, (val, length) in args.items():
-            if val is not None:
-                if val:
-                    if len(val) > length:
-                        raise ValueError(f"Length of {key} is too long.")
-                    kwargs[key] = val
-                else:
-                    kwargs[key] = ''
+                    kwargs[key] = '' if min_ is None else -1
         table = f"{user_id}-{pos_number}-storeInfo"
         return self.__write_to_store_db(INS if init else UPD, table, **kwargs)
 
