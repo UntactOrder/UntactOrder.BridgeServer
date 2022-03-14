@@ -49,6 +49,8 @@ unit_type = "bridge" if UNIT_TYPE == UnitType.BRIDGE else "pos" if UNIT_TYPE == 
 
 # organization name
 ORGANIZATION = "UntactOrder"
+DYNAMIC_LINK_DOMAIN = ORGANIZATION.lower() + ".page.link"
+DEEP_LINK_DOMAIN = ORGANIZATION.lower() + ".github.io"
 
 # certificate path settings
 __CERT_DIR = "cert" if OS == "Windows" else f"/etc/{unit_type}server"
@@ -321,7 +323,7 @@ class AES256CBC:
     __instance = {'qr': None}
 
     @classmethod
-    def get_instance(cls, key):
+    def get_instance(cls, key) -> 'AES256CBC':
         return cls.__instance.get(key, None)
 
     def __init__(self, encrypt_key):

@@ -351,6 +351,10 @@ class Store(object):
         return self.user_id + '@' + self.db_ip
 
     @cached_property
+    def aes_iv(self):
+        return User(self.user_id, self.db_ip).aes_iv
+
+    @cached_property
     def business_registration_number(self):
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number,
                                                      business_registration_number=True)[0][0]
@@ -387,15 +391,24 @@ class Store(object):
         """ Update store item list. """
         return self.db_connection.update_item_list(self.user_id, self.pos_number, new_list, update_list)
 
-    def get_store_table_string(self):
-        """ Get store table list. """
-        return Store.get_store_table_string(self.user_id, self.pos_number, )
+    def get_store_table_list(self, table_string: str = None) -> int | tuple[tuple] | None:
+        """ Get store table list.
+        :param table_string: if table string is not None, return table number of table string.
+                             if None, return all table list.
+        """
+        return self.db_connection.acquire_store_table_list(self.user_id, self.pos_number, table_string)
 
-    def get_store_qr_code(self):
+    def get_store_qr_code(self, table_string: str = None, check_validity: bool = True) -> str | None:
+        """ Get store QR code. """
+        if check_validity:
+            if self.get_store_table_list(table_string) is None:
+                raise ValueError("Table does not exist.")
+        enc = AES256CBC.get_instance('qr').encrypt(f"{self.pos_number}-{table_string}", self.aes_iv)
+        return fcon.DynamicLink.get_store_qr_dynamic_link(f"{self.iso4217}-{self.business_registration_number}", enc)
 
-    def add_new_table(self, amount: int = 1):
+    def add_new_table(self, amount: int = 1) -> bool:
         """ Add new table. """
-        pass
+        return self.db_connection.register_new_table(self.user_id, self.pos_number, amount)
 
     @property
     def fcm_token(self) -> tuple[str, ...]:

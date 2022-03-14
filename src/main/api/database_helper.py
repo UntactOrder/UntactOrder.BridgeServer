@@ -43,15 +43,15 @@ _V_ = lambda value: f"{value}" if value is int else f"'{value}'"
 
 # define password generator
 def gen_random_password(length: int = 28, pool=string.ascii_letters+string.digits+string.punctuation) -> str:
-    return "".join([choice(pool) for i in range(length)])
+    return "".join([choice(pool) for _ in range(length)])
 
 
 # define token generator
-def token_generator(length: int = 128):
+def gen_order_token(length: int = 128):
     return gen_random_password(length)
 
 
-def table_string_generator(length: int = 10):
+def gen_table_string(length: int = 10):
     return gen_random_password(length, string.ascii_letters+string.digits)
 
 
@@ -146,7 +146,7 @@ class DatabaseConnection(object):
 
         def delayed_work_handler():
             """ Delayed Work Handler """
-            if not self.__check_db_connection(reconnect=True):
+            if not self.__check_db_connection(reconnect=True):  # TODO: check if this method is worth enough
                 start_delay_work_timer()
             self.__is_timer_running = False
             for work in self.__delayed_work:
@@ -399,8 +399,8 @@ class DatabaseConnection(object):
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
         elif 'orderToken' in table:
-            sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"orderToken VARCHAR(128) {NNUL}, userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL});"
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (orderToken VARCHAR(128) PRIMARY KEY {NNUL}, " \
+                  f"userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
         return self.__write(self.__store_database, sql, query, table, column_condition, **kwargs)
@@ -623,7 +623,7 @@ class DatabaseConnection(object):
         else:
             registered = self.__read_from_store_db(table, target='orderToken')
             while True:
-                order_token = token_generator()
+                order_token = gen_order_token()
                 if order_token not in registered:
                     break
             result = self.__write_to_store_db(INS, table, orderToken=order_token,
@@ -707,23 +707,54 @@ class DatabaseConnection(object):
         return self.__read_from_store_db(table)
 
     def register_store_item_list(self, user_id: str, pos_number: int,
-                                 new_list: list = None, update_list: list = None) -> bool:
-        """ Register store item list to user database. """
+                                 new_list: list[list] = None, update_list: list[list] = None) -> bool:
+        """ Register store item list to user database.
+        :param new_list: list of new items. [[name, price, type, photoUrl, ...], ...]
+        :param update_list: list of items need to be updated. [[name, price, type, photoUrl, ...], ...]
+        """
         table = f"{user_id}-{pos_number}-items"
+        # TODO: implement this method
         # do insert
         result = self.__write_to_store_db(UPD, table, )
         # do update
         self.__write_to_store_db(UPD, table, )
+        # do commit
         return
 
-    def acquire_store_table_number_by_table_string(self, store_user_id: str, pos_number: int,
-                                                   table_string: str) -> int | None:
-        """ Acquire store table number by table string. """
+    def acquire_store_table_list(self, store_user_id: str, pos_number: int, table_string: str = None
+                                 ) -> int | tuple[tuple] | None:
+        """ Acquire store table number by table string.
+        If table string is set, acquire table number by table string.
+        """
         table = f"{store_user_id}-{pos_number}-tableAlias"
-        result = self.__read_from_store_db(table, column_condition='tableString', tableString=table_string, target='id')
-        return result[0][0] if result else None
+        kwargs = {'column_condition': 'tableString', 'tableString': table_string, 'target': 'id'}
+        result = self.__read_from_store_db(table, **kwargs if table_string is not None else None)
+        return result if result else None
 
-    def register_new_table
+    def register_new_table(self, store_user_id: str, pos_number: int, amount: int = 1) -> bool:
+        """ Register new table to store database.
+        !WARNING!: Table String cannot be duplicated.
+        """
+        table = f"{store_user_id}-{pos_number}-tableAlias"
+        opr = INS
+        index = []
+        while True:
+            # get registered table strings
+            r_indx, r_str = zip(*self.acquire_store_table_list(store_user_id, pos_number))
+            # find duplicated table string
+            result = Counter(r_str)
+            result_indx = []
+            if not result or not []:
+
+            # gen table strings
+            table_strings = set()
+            while True:
+                if len(table_strings) == amount:
+                    break
+                table_strings.update({gen_table_string() for _ in range(amount-len(table_strings))})
+
+
+        result = self.__write_to_store_db(INS, table, **kwargs)
 
     def delete_user(self, user_id: str) -> bool:
         """ Delete user from user database. """
@@ -763,11 +794,11 @@ class ExclusiveDatabaseConnection(object):
                                        user=self.__user_name, password=self.__password,
                                        db="exclusiveDatabase", charset='utf8')
         cur = self.__connection.cursor()
-        sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (" \
-              f"phoneNumber VARCHAR(100) {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
+        sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (phoneNumber VARCHAR(100) PRIMARY KEY {NNUL}, " \
+              f"userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
         cur.execute(sql)
         sql = f"{CRE_TB} IF NOT EXISTS registeredBusinessLicenseNumberList (" \
-              f"identifier VARCHAR(31) {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
+              f"identifier VARCHAR(31) PRIMARY KEY {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
         cur.execute(sql)
         cur.close()
         self.__connection.commit()
@@ -780,16 +811,19 @@ class ExclusiveDatabaseConnection(object):
         """ Set exclusive lock on the database.
         :return: True if success, False if failed.
         """
+        # TODO: implement this method
         pass
 
     def __set_mutex_unlock(self, *args, **kwargs):
         """ Unlock the mutex. """
+        # TODO: implement this method
         pass
 
     def __check_mutex_status(self, *args, **kwargs):
         """ Check the mutex status.
         :return: True if locked | False if unlocked
         """
+        # TODO: implement this method
         pass
 
     def __write(self, query, table, column_condition, **kwargs):

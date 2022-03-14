@@ -8,7 +8,7 @@ Reference : [admin] https://firebase.google.com/docs/reference/admin/python/fire
 from firebase_admin import initialize_app, credentials, auth, messaging
 
 # Fetch the service account key JSON file contents
-from settings import FIREBASE_API_KEY_FILE
+from settings import FIREBASE_API_KEY_FILE, DYNAMIC_LINK_DOMAIN, DEEP_LINK_DOMAIN
 __cred = credentials.Certificate(FIREBASE_API_KEY_FILE)
 
 # Initialize the app with a service account, granting admin privileges
@@ -222,3 +222,22 @@ def send_cloud_message(token, message: str):
             token=tok
         )
         messaging.send(message)
+
+
+class DynamicLink(object):
+    """ Dynamic Link Generator """
+    DYN = "https://" + DYNAMIC_LINK_DOMAIN
+    DP = "https://" + DEEP_LINK_DOMAIN
+    PKG = DEEP_LINK_DOMAIN.split(".").reverse()
+
+    APN = PKG + ".androidclient"
+    IBI = PKG + ".darwinclient"
+    OFL = DP
+
+    USR = "user"
+    STR = "store"
+
+    @classmethod
+    def get_store_qr_dynamic_link(cls, identifier: str, detail: str) -> str:
+        return f"{cls.DYN}/?link={cls.DP}/{cls.STR}/{identifier}-{detail}/conn" \
+               f"&apn={cls.APN}&ibi={cls.IBI}&ofl={cls.OFL}"

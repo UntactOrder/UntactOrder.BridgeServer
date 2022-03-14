@@ -97,7 +97,7 @@ class DatabaseConnection(object):
                 token : VARCHAR(4096) | firebase cloud messaging token
             }
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
-                orderToken : VARCHAR(128) | user order token for pos_number
+                orderToken : VARCHAR(128) PRIMARY KEY | user order token for pos_number
                 userEmail : VARCHAR(141) | customer id + db ip  # one customer can have only one token per pos one time.
                                                                 # token will be deleted after order is completed.
                                                                 # To prevent errors, tokens should not expire
@@ -135,15 +135,15 @@ class ExclusiveDatabaseConnection(object):
         """ Database Schema : db_name - table_name - column_name
         exclusiveDatabase {
             registeredPhoneNumberList {
-                phoneNumber : VARCHAR(100) | phone number  # to prevent duplicate phone numbers from being registered
+                phoneNumber : VARCHAR(100) PRIMARY KEY | phone number  # to prevent duplicate phone numbers
+                                                                         from being registered
                 userId : VARCHAR(40) | user id - (40 : user id length limit)
                 dbIpAddress : VARCHAR(100) | store database ip address
             }
             registeredBusinessLicenseNumberList {
-                identifier : VARCHAR(31) | ISO4217-business_registration_number  # to prevent duplicate license numbers
-                                                                                   from being registered
-                                                                                 # one identifier can be registered
-                                                                                   by one user
+                identifier : VARCHAR(31) PRIMARY KEY                 # to prevent duplicate license numbers
+                             | ISO4217-business_registration_number    from being registered
+                                                                     # one identifier can be registered by one user
                 userId : VARCHAR(40) | user id - (40 : user id length limit)
                 dbIpAddress : VARCHAR(100) | store database ip address
             }
