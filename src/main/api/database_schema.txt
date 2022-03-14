@@ -88,8 +88,8 @@ class DatabaseConnection(object):
                 available : BOOLEAN | whether item is deprecated  # required
             }
             kakao_unique_id-pos_number-tableAlias {  # storeTableStringTable
-                id : INT PRIMARY KEY autoincrement | index
-                tableString : VARCHAR(10) | table string  # required
+                id : INT autoincrement | index
+                tableString : VARCHAR(10) PRIMARY KEY | table string  # required
             }
             kakao_unique_id-pos_number-fcmToken {  # fcmTokenTable, firebase cloud messaging token
                                                    # ref: https://firebase.google.com/docs/cloud-messaging/manage-tokens
@@ -97,12 +97,12 @@ class DatabaseConnection(object):
                 token : VARCHAR(4096) | firebase cloud messaging token
             }
             kakao_unique_id-pos_number-orderToken {  # storeOrderTokenTable
-                orderToken : VARCHAR(128) PRIMARY KEY | user order token for pos_number
+                orderToken : VARCHAR(128) PRIMARY KEY UNIQUE KEY | user order token for pos_number
                 userEmail : VARCHAR(141) | customer id + db ip  # one customer can have only one token per pos one time.
-                                                                # token will be deleted after order is completed.
+                            PRIMARY KEY                         # token will be deleted after order is completed.
                                                                 # To prevent errors, tokens should not expire
                                                                   or be deleted before the order is completed.
-                tableNumber : INT | table number
+                tableNumber : INT PRIMARY KEY | table number
             }
         }"""
         """

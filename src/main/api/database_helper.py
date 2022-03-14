@@ -7,7 +7,6 @@ Reference : [pymysql] https://pymysql.readthedocs.io/en/latest/modules/cursors.h
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from __future__ import annotations
 
-from threading import Timer
 from random import choice
 import string
 
@@ -22,9 +21,11 @@ SHW_DBS, SHW_TBS, SHW_TB_STAT = "SHOW DATABASES", "SHOW TABLES", "SHOW TABLE STA
 CRE_TB, TRN_TB, DRP_TB = "CREATE TABLE", "TRUNCATE TABLE", "DROP TABLE"
 #                        # create table  # re-create table  # delete table
 
+PRIM, UNIQ = "PRIMARY KEY", "UNIQUE INDEX"
 NNUL, DFT = "NOT NULL", "DEFAULT"
 
 SEL, INS, UPD, DEL = "SELECT", "INSERT", "UPDATE", "DELETE"
+INSIG, REP, ONDUP = "INSERT IGNORE", "REPLACE", "ON DUPLICATE KEY UPDATE"
 
 FRM = "FROM"  # for SELECT
 ITO = "INTO"  # for INSERT
@@ -40,12 +41,10 @@ _V_ = lambda value: f"{value}" if value is int else f"'{value}'"
 # -----------------------------------------------------------------------------
 
 
-# define password generator
 def gen_random_password(length: int = 28, pool=string.ascii_letters+string.digits+string.punctuation) -> str:
     return "".join([choice(pool) for _ in range(length)])
 
 
-# define token generator
 def gen_order_token(length: int = 128):
     return gen_random_password(length)
 
@@ -138,45 +137,6 @@ class DatabaseConnection(object):
             cls.__db_server_list[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
 
     def __init__(self, db_ip, port, user_name, password):
-        self.__delayed_work = []  # delayed work list for emergency situation (async concept)                        #
-        #                           you should consider use temporary database for emergency situation               #
-        #                           because, this delayed_work list has a risk which the data will be disappeared    #
-        #                           when the server is shut down. Be careful.                                        #
-
-        def delayed_work_handler():
-            """ Delayed Work Handler """
-            if not self.__check_db_connection(reconnect=True):  # TODO: check if this method is worth enough
-                start_delay_work_timer()
-            self.__is_timer_running = False
-            for work in self.__delayed_work:
-                work()
-                print(f"[green]INFO: A Delayed Work Finished. (left={len(self.__delayed_work)}) "
-                      f"[in Database Connection][/green]")
-            self.__user_database.commit()
-            self.__store_database.commit()
-            self.__order_history_database.commit()
-
-        def start_delay_work_timer():
-            """ Start Delay Work Timer """
-            self.__delay_work_timer__ = Timer(60*10, delayed_work_handler)
-            self.__delay_work_timer__.start()
-            self.__is_timer_running = True
-
-        def set_delayed_work(work):
-            """ Set Delayed Work
-            :param work: delayed work (lambda function)
-            """
-            self.__delayed_work.append(work)
-            print(f"[yellow]WARNING: Delayed Work Registered. (left={len(self.__delayed_work)})\n"
-                  f"Do not shut down the server until there is no delayed work. [in Database Connection][/yellow]")
-            if not self.__is_timer_running:
-                start_delay_work_timer()
-
-        self.set_delayed_work = set_delayed_work
-        self.__is_timer_running = False
-
-        ################################################################################################################
-
         self.host = db_ip
         self.port = port
         self.__user_name = user_name
@@ -192,7 +152,6 @@ class DatabaseConnection(object):
         self.__order_history_database = Connection(host=self.host, port=self.port, ssl_ca=self.__ROOT_CA,
                                                    user=self.__user_name, password=self.__password,
                                                    db="orderHistoryDatabase", charset='utf8')
-        self.connected = self.__check_db_connection()
 
     def __del__(self):
         self.__user_database.commit()
@@ -202,21 +161,21 @@ class DatabaseConnection(object):
         self.__store_database.close()
         self.__order_history_database.close()
 
-    def __check_db_connection(self, reconnect=False) -> bool:
+    def check_db_connection(self, func):
         """ Check if the database connection is alive.
-            If reconnect is True, try to reconnect database when db connection is dead.
+        :raise OSError: if the database connection is not alive
         """
-        try:
-            self.__user_database.ping(reconnect=reconnect)
-            self.__store_database.ping(reconnect=reconnect)
-            self.__order_history_database.ping(reconnect=reconnect)
-            self.connected = True
-            return self.connected
-        except Exception as e:
-            print(e)
-            self.connected = False
-            return self.connected
+        def check_ping(reconnect=True):
+            try:
+                self.__user_database.ping(reconnect=reconnect)
+                self.__store_database.ping(reconnect=reconnect)
+                self.__order_history_database.ping(reconnect=reconnect)
+            except Exception as e:
+                raise OSError("Database Connection Error:", e)
+            return func
+        return check_ping
 
+    @check_db_connection
     def calculate_disk_usage(self) -> float:
         """ Calculate disk usage in MB.
         :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
@@ -224,13 +183,11 @@ class DatabaseConnection(object):
         # TODO: fix this
         return 0.0
 
+    @check_db_connection
     def search_table_by_name_format(self, db, table_format) -> tuple | None:
         """ Search table by name format.
         :return: table name list
         """
-        if not self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
-
         sql = f"{SEL} {AL} {FRM} information_schema.TABLE_CONSTRAINTS {WHR} TABLE_NAME LIKE '%{table_format}%'"
         cur = db.cursor()
         cur.execute(sql)
@@ -274,11 +231,11 @@ class DatabaseConnection(object):
         """
         opr = kwargs.pop('operator', IS)
 
-        if query == INS:
+        if query in (INS, INSIG, REP):
             kwargs = {key: [val] if val is not list else val for key, val in kwargs.items()}
             values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
-            sql = f"{INS} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ");"
-        elif query in (UPD, DEL):
+            sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ");"
+        elif query in (UPD, DEL, ONDUP):
             target_col = column_condition if column_condition is list else [column_condition]
             target_val = [kwargs.pop(col) for col in target_col]
             if query == UPD:
@@ -296,9 +253,6 @@ class DatabaseConnection(object):
         return sql
 
     def __read(self, db, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
-        if not self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
-
         if column_condition is None:
             column_condition = []
 
@@ -307,9 +261,7 @@ class DatabaseConnection(object):
         cur.execute(sql)
         result = cur.fetchall()
         cur.close()
-        if len(result) == 0:
-            return None
-        return result
+        return None if len(result) == 0 else result
 
     def __read_from_user_db(self, table, column_condition=None, **kwargs) -> tuple[tuple] | None:
         """ Read user info from user database. """
@@ -323,11 +275,7 @@ class DatabaseConnection(object):
         """ Read order history from order history database. """
         return self.__read(self.__order_history_database, table, column_condition, **kwargs)
 
-    def __write(self, db, table_inf, query, table, column_condition=None, **kwargs) -> bool:
-        if not self.__check_db_connection():  # delayed work for emergency situation
-            self.set_delayed_work(lambda: self.__write_to_user_db(query, table, column_condition, **kwargs))
-            return False
-
+    def __write(self, db, table_inf, query, table, column_condition=None, **kwargs) -> int:
         if column_condition is None:
             column_condition = []
 
@@ -338,12 +286,11 @@ class DatabaseConnection(object):
 
         # do the work
         sql = self.__make_write_query__(query, table, column_condition, **kwargs)
-        cur.execute(sql)
-
+        affected_rows = cur.execute(sql)
         cur.close()
-        return True
+        return affected_rows
 
-    def __write_to_user_db(self, query, table, column_condition=None, **kwargs) -> bool:
+    def __write_to_user_db(self, query, table, column_condition=None, **kwargs) -> int:
         """ Write user info to user database. Do not commit in this function. """
         if 'userInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
@@ -359,14 +306,14 @@ class DatabaseConnection(object):
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
         elif 'orderHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id BIGINT AUTO_INCREMENT PRIMARY KEY {NNUL}, businessName VARCHAR(100) {NNUL}, " \
+                  f"id BIGINT AUTO_INCREMENT  {NNUL}, businessName VARCHAR(100) {NNUL}, " \
                   f"totalPrice INT {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
                   f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
         return self.__write(self.__user_database, sql, query, table, column_condition, **kwargs)
 
-    def __write_to_store_db(self, query, table, column_condition=None, **kwargs) -> bool:
+    def __write_to_store_db(self, query, table, column_condition=None, **kwargs) -> int:
         """ Write store info to store database. Do not commit in this function. """
         if 'storeInfo' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
@@ -385,7 +332,7 @@ class DatabaseConnection(object):
                   f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
         elif 'items' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, name VARCHAR(100) {NNUL}, price INT {NNUL}, " \
+                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(100) {NNUL}, price INT {NNUL}, " \
                   f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
@@ -393,26 +340,28 @@ class DatabaseConnection(object):
                   f"pinned BOOLEAN {NNUL} {DFT} 0, available  BOOLEAN {NNUL} {DFT} 1);"
         elif 'tableAlias' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, tableString VARCHAR(10) {NNUL});"
+                  f"id INT AUTO_INCREMENT {NNUL}, tableString VARCHAR(10) {PRIM} {NNUL});"
         elif 'fcmToken' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
         elif 'orderToken' in table:
-            sql = f"{CRE_TB} IF NOT EXISTS {table} (orderToken VARCHAR(128) PRIMARY KEY {NNUL}, " \
-                  f"userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL});"
+            sql = f"{CRE_TB} IF NOT EXISTS {table} (orderToken VARCHAR(128) {NNUL}, " \
+                  f"userEmail : VARCHAR(141) {NNUL}, tableNumber INT {NNUL}" \
+                  f"{PRIM} (orderToken, userEmail, tableNumber), {UNIQ} INDX_ODR_TK (orderToken));"
         else:
             raise ValueError(f"{table} is not supported.")
         return self.__write(self.__store_database, sql, query, table, column_condition, **kwargs)
 
-    def __write_to_order_history_db(self, query, table, column_condition=None, **kwargs) -> bool:
+    def __write_to_order_history_db(self, query, table, column_condition=None, **kwargs) -> int:
         """ Write order history to order history database. Do not commit in this function. """
         sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-              f"id INT AUTO_INCREMENT PRIMARY KEY {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
+              f"id INT AUTO_INCREMENT {PRIM} {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
               f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
               f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
               f"menuName VARCHAR(300) {NNUL}, menuPrice INT {NNUL}, menuQuantity INT {NNUL});"
         return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
+    @check_db_connection
     def acquire_user_info(self, user_id: str, aes_iv=False, legal_name=False, email=False, phone=False,
                           age=False, gender=False, last_access_date=False) -> tuple[tuple] | None:
         """ Acquire user information from user database. """
@@ -422,9 +371,10 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'userInfo'
         return self.__read_from_user_db(table, target=target if not target else list(args.keys()))
 
+    @check_db_connection
     def register_user_info(self, user_id: str, legal_name: str = None, email: str = None, phone: str = None,
                            age: int = None, gender: int = None, silent: bool = False,
-                           init: bool = False, aes_iv: str = None) -> bool:
+                           init: bool = False, aes_iv: str = None) -> int:
         """ Register user information to user database.
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
@@ -454,23 +404,22 @@ class DatabaseConnection(object):
         if not silent:
             kwargs['lastAccessDate'] = now().strftime("%Y-%m-%d")
         table = user_id + '-' + 'userInfo'
-        if self.__write_to_user_db(INS if init else UPD, table, **kwargs):
-            table = user_id + '-' + 'alterHis'
-            upd_log = [f"{INS if init else UPD} " + ", ".join(upd_his)]
-            del_log = [f"{DEL} " + ", ".join(del_his)]
-            result = []
-            for log_type, alt_type in ((upd_log, self.USR.ALT.update), (del_log, self.USR.ALT.delete)):
-                while len(log_type[-1]) > self.MARIADB_VARCHAR_MAX:
-                    head, foot = log_type[-1][:self.MARIADB_VARCHAR_MAX], log_type[-1][self.MARIADB_VARCHAR_MAX:]
-                    log_type[-1] = head
-                    log_type.append(foot)
-                result.extend([self.__write_to_user_db(INS, table, alterDateTime=now().strftime("%Y-%m-%d_%H:%M:%S:%f"),
-                                                       alterType=alt_type, alterLogMessage=msg) for msg in log_type])
-            if False not in result:
-                self.__user_database.commit()
-                return True
-        return False
+        result = self.__write_to_user_db(INS if init else UPD, table, **kwargs)
+        table = user_id + '-' + 'alterHis'
+        upd_log = [f"{INS if init else UPD} " + ", ".join(upd_his)]
+        del_log = [f"{DEL} " + ", ".join(del_his)]
+        for log_type, alt_type in ((upd_log, self.USR.ALT.update), (del_log, self.USR.ALT.delete)):
+            while len(log_type[-1]) > self.MARIADB_VARCHAR_MAX:
+                head, foot = log_type[-1][:self.MARIADB_VARCHAR_MAX], log_type[-1][self.MARIADB_VARCHAR_MAX:]
+                log_type[-1] = head
+                log_type.append(foot)
+            date_time = [now().strftime("%Y-%m-%d_%H:%M:%S:%f") for _ in range(len(log_type))]
+            self.__write_to_user_db(INS, table, alterDateTime=date_time,
+                                    alterType=[alt_type]*len(log_type), alterLogMessage=log_type)
+        self.__user_database.commit()
+        return result
 
+    @check_db_connection
     def acquire_fcm_tokens(self, user_id: str, pos_number: int = None) -> tuple[str, ...]:
         """ Acquire fcm tokens from user/store database.
         :param user_id: user id
@@ -480,7 +429,8 @@ class DatabaseConnection(object):
         # TODO: do commit.
         return "", ""
 
-    def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> bool:
+    @check_db_connection
+    def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> int:
         """ Register new fcm token to user/store database.
             If token is already in database, just return true.
         :param token: Firebase Cloud Messaging token.
@@ -503,9 +453,10 @@ class DatabaseConnection(object):
             pass
         # TODO: check token length.
         # TODO: put new token.
-        # TODO: do commit.
-        return True
+        self.__user_database.commit()
+        return result
 
+    @check_db_connection
     def acquire_user_order_history(self, user_id: str, start_index=None, opr=GTE) -> tuple[tuple, ...] | None:
         """ Acquire user order history.
         :param user_id: user id
@@ -516,6 +467,7 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'orderHis'
         return self.__read_from_user_db(table, column_condition='id', id=start_index, opr=opr)
 
+    @check_db_connection
     def acquire_order_history(self, pointer: str, date=None) -> tuple | tuple[tuple, ...] | None:
         """ Acquire order history from order history database.
         :param pointer: pointer to order history database
@@ -533,8 +485,9 @@ class DatabaseConnection(object):
             result = tuple(self.__read_from_order_history_db(his) for his in history_list)
         return result
 
+    @check_db_connection
     def register_user_order_history(self, user_id: str,
-                                    business_name: str, total_price: int, db_ip: str, pointer: str) -> bool:
+                                    business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
         """ Register user order history to user database.
         :param user_id: user id
         :param business_name: business name
@@ -553,11 +506,11 @@ class DatabaseConnection(object):
             raise ValueError("Length of pointer is too long.")
         result = self.__write_to_user_db(INS, table, businessName=business_name,
                                          totalPrice=total_price, dbIpAddress=db_ip, historyStoragePointer=pointer)
-        if result:
-            self.__user_database.commit()
+        self.__user_database.commit()
         return result
 
-    def register_order_history(self, pointer: str, order_history: list[list, ...]) -> bool:
+    @check_db_connection
+    def register_order_history(self, pointer: str, order_history: list[list, ...]) -> int:
         """ Register order history to order history database.
         :param pointer: order history database table name
         :param order_history: order history | list[list, ...]
@@ -581,10 +534,10 @@ class DatabaseConnection(object):
         result = self.__write_to_order_history_db(INS, pointer, firebaseUid=firebase_uids, orderStatus=order_statuses,
                                                   paymentMethod=payment_methods, menuName=menu_names,
                                                   menuPrice=menu_prices, menuQuantity=menu_quantities)
-        if result:
-            self.__order_history_database.commit()
+        self.__order_history_database.commit()
         return result
 
+    @check_db_connection
     def acquire_store_list(self, user_id: str) -> list[str]:
         """ Acquire store list from store database.
         :return: store list | list[str]
@@ -595,6 +548,7 @@ class DatabaseConnection(object):
         result = [store.replace('storeInfo', '') for store in result if store.endswith('-storeInfo')]
         return result
 
+    @check_db_connection
     def acquire_user_by_order_token(self, store_user_id: str, pos_number: int, token: str | list
                                     ) -> tuple[str, str, str] | tuple[tuple[str, str, str]] | None | tuple[None, ...]:
         """ Acquire user order token from store database.
@@ -610,28 +564,28 @@ class DatabaseConnection(object):
         else:
             return tuple(result)
 
+    @check_db_connection
     def register_user_order_token(self, store_user_id: str, pos_number: int,
-                                  customer_email: str, table_number: int) -> str | False:
-        """ Register user order token to store database.
-        """
+                                  customer_email: str, table_number: int) -> str:
+        """ Register user order token to store database. """
         table = f"{store_user_id}-{pos_number}-orderToken"
         order_token = self.__read_from_store_db(table, column_condition=['userEmail', 'tableNumber'],
                                                 userEmail=customer_email, tableNumber=table_number)
         if order_token:
             return order_token[0]
         else:
-            registered = self.__read_from_store_db(table, target='orderToken')
-            while True:
+            for _ in range(3):  # try 3 times max
                 order_token = gen_order_token()
-                if order_token not in registered:
-                    break
-            result = self.__write_to_store_db(INS, table, orderToken=order_token,
-                                              userEmail=customer_email, tableNumber=table_number)
-            if not result:
-                return False
+                result = self.__write_to_store_db(INSIG, table, orderToken=order_token,
+                                                  userEmail=customer_email, tableNumber=table_number)
+                if result:
+                    break  # if result is not zero, it means that the order token is registered.
+            if result == 0:
+                raise RuntimeError("Failed to register order token.")
             self.__store_database.commit()
             return order_token
 
+    @check_db_connection
     def acquire_store_info(self, user_id: str, pos_number: int, iso4217=False, business_registration_number=False,
                            public_ip=False, wifi_password=False, gateway_ip=False, gateway_mac=False, pos_ip=False,
                            pos_mac=False, pos_port=False, business_name=False, business_address=False,
@@ -652,6 +606,7 @@ class DatabaseConnection(object):
         table = f"{user_id}-{pos_number}-storeInfo"
         return self.__read_from_store_db(table, target=target)
 
+    @check_db_connection
     def register_store_info(self, user_id: str, pos_number: int, public_ip: str = None, wifi_password: str = None,
                             gateway_ip: str = None, gateway_mac: str = None, pos_ip: str = None,
                             pos_mac: str = None, pos_port: int = None, business_name: str = None,
@@ -659,7 +614,7 @@ class DatabaseConnection(object):
                             business_description: str = None, business_profile_image: str = None,
                             business_email: str = None, business_website: str = None, business_open_time: str = None,
                             business_close_time: str = None, business_category: str = None,
-                            business_sub_category: str = None, init: bool = False, initializer: list = None) -> bool:
+                            business_sub_category: str = None, init: bool = False, initializer: list = None) -> int:
         """ Register store information to user database.
         If silent is true, this method will not update last access date.
         If an argument is None, then not update. but in case of False, that argument will be updated to empty string.
@@ -698,15 +653,19 @@ class DatabaseConnection(object):
                 else:
                     kwargs[key] = '' if min_ is None else -1
         table = f"{user_id}-{pos_number}-storeInfo"
-        return self.__write_to_store_db(INS if init else UPD, table, **kwargs)
+        result = self.__write_to_store_db(INS if init else UPD, table, **kwargs)
+        self.__store_database.commit()
+        return result
 
+    @check_db_connection
     def acquire_store_item_list(self, user_id: str, pos_number: int) -> tuple[tuple] | None:
         """ Acquire store item list from user database. """
         table = f"{user_id}-{pos_number}-items"
         return self.__read_from_store_db(table)
 
+    @check_db_connection
     def register_store_item_list(self, user_id: str, pos_number: int,
-                                 new_list: list[list] = None, update_list: list[list] = None) -> bool:
+                                 new_list: list[list] = None, update_list: list[list] = None) -> int:
         """ Register store item list to user database.
         :param new_list: list of new items. [[name, price, type, photoUrl, ...], ...]
         :param update_list: list of items need to be updated. [[name, price, type, photoUrl, ...], ...]
@@ -717,9 +676,10 @@ class DatabaseConnection(object):
         result = self.__write_to_store_db(UPD, table, )
         # do update
         self.__write_to_store_db(UPD, table, )
-        # do commit
-        return
+        self.__store_database.commit()
+        return result
 
+    @check_db_connection
     def acquire_store_table_list(self, store_user_id: str, pos_number: int, table_string: str = None
                                  ) -> int | tuple[tuple] | None:
         """ Acquire store table number by table string.
@@ -730,55 +690,43 @@ class DatabaseConnection(object):
         result = self.__read_from_store_db(table, **kwargs if table_string is not None else None)
         return result if result else None
 
-    def register_new_table(self, store_user_id: str, pos_number: int, amount: int = 1) -> bool:
+    @check_db_connection
+    def register_new_table(self, store_user_id: str, pos_number: int, amount: int = 1):
         """ Register new table to store database.
         !WARNING!: Table String cannot be duplicated.
         """
         table = f"{store_user_id}-{pos_number}-tableAlias"
-        opr = INS
-        while True:
-            # get registered table strings
-            r_indx, r_str = zip(*self.acquire_store_table_list(store_user_id, pos_number))
-            # find duplicated table string
-            result = Counter(r_str)
-            result_indx = []
-            if not result or not []:
-
-
-            # get registered table strings
-            r_indx, r_str = zip(*self.acquire_store_table_list(store_user_id, pos_number))
+        while amount == 0:
             # gen table strings
             table_strings = set()
             while True:
                 table_strings.update({gen_table_string() for _ in range(amount-len(table_strings))})
-                table_strings.difference_update(r_str)
                 if len(table_strings) == amount:
                     table_strings = list(table_strings)
                     break
-            result = self.__write_to_store_db(INS, table, tableString=table_strings)
+            result = self.__write_to_store_db(INSIG, table, tableString=table_strings)
+            amount -= result
 
-    def delete_user(self, user_id: str) -> bool:
+    @check_db_connection
+    def delete_user(self, user_id: str) -> int:
         """ Delete user from user database. """
         result = self.__write_to_user_db(DRP_TB, user_id+'-userInfo')
         self.__write_to_user_db(DRP_TB, user_id+'-alterHis')
         self.__write_to_user_db(DRP_TB, user_id+'-fcmToken')
         self.__write_to_user_db(DRP_TB, user_id+'-orderHis')
-        if result:
-            self.__user_database.commit()
-            return True
-        return False
+        self.__user_database.commit()
+        return result
 
-    def delete_store(self, user_id: str, pos_number: int) -> bool:
+    @check_db_connection
+    def delete_store(self, user_id: str, pos_number: int) -> int:
         """ Delete store from store database. """
         result = self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-storeInfo")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-items")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-tableAlias")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-fcmToken")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-orderToken ")
-        if result:
-            self.__user_database.commit()
-            return True
-        return False
+        self.__user_database.commit()
+        return result
 
 
 class ExclusiveDatabaseConnection(object):
@@ -795,18 +743,24 @@ class ExclusiveDatabaseConnection(object):
                                        user=self.__user_name, password=self.__password,
                                        db="exclusiveDatabase", charset='utf8')
         cur = self.__connection.cursor()
-        sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (phoneNumber VARCHAR(100) PRIMARY KEY {NNUL}, " \
+        sql = f"{CRE_TB} IF NOT EXISTS registeredPhoneNumberList (phoneNumber VARCHAR(100) {PRIM} {NNUL}, " \
               f"userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
         cur.execute(sql)
         sql = f"{CRE_TB} IF NOT EXISTS registeredBusinessLicenseNumberList (" \
-              f"identifier VARCHAR(31) PRIMARY KEY {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
+              f"identifier VARCHAR(31) {PRIM} {NNUL}, userId VARCHAR(40) {NNUL}, dbIpAddress VARCHAR(100) {NNUL});"
         cur.execute(sql)
         cur.close()
         self.__connection.commit()
 
-    def __check_db_connection(self):
+    def check_db_connection(self, func):
         """ Check if database connection is alive. And if not, reconnect. """
-        return self.__connection.ping(reconnect=True)
+        def check_ping():
+            try:
+                self.__connection.ping(reconnect=True)
+            except Exception as e:
+                raise OSError("Database connection is not alive. Cannot proceed:", e)
+            return func
+        return check_ping
 
     def __set_mutex_lock(self, *args, **kwargs):
         """ Set exclusive lock on the database.
@@ -827,7 +781,7 @@ class ExclusiveDatabaseConnection(object):
         # TODO: implement this method
         pass
 
-    def __write(self, query, table, column_condition, **kwargs):
+    def __write(self, query, table, column_condition, **kwargs) -> int:
         """ Write to database.
         :param query: query method
         :param table: table name
@@ -838,9 +792,9 @@ class ExclusiveDatabaseConnection(object):
         sql = DatabaseConnection.__make_write_query__(query, target_table, column_condition, **kwargs)
 
         cur = self.__connection.cursor()
-        cur.execute(sql)
+        number_of_rows = cur.execute(sql)
         cur.close()
-        self.__connection.commit()
+        return number_of_rows
 
     def __read(self, table, column_condition, **kwargs) -> tuple[tuple, ...] | None:
         """ Read from database.
@@ -852,20 +806,16 @@ class ExclusiveDatabaseConnection(object):
         cur.execute(sql)
         result = cur.fetchall()
         cur.close()
-        if len(result) == 0:
-            return None
-        return result
+        return None if len(result) == 0 else result
 
+    @check_db_connection
     def register_phone_number(self, phone: str, new_user_id: str, new_dp_ip: str) -> None | tuple:
         """ Register phone number.
         If there is no duplicate phone number, just register the phone number.
         If there is a duplicate phone number, overwrite the original value to new value
                                               and return the original user value.
         :return: None if there's no duplicate key | (user_id, db_ip_address) if there's duplicate key
-        :raise OSError: if database connection is not alive.
         """
-        if self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
         while self.__check_mutex_status():
             pass  # TODO: check if sleep is needed.
         while not self.__set_mutex_lock():
@@ -875,20 +825,19 @@ class ExclusiveDatabaseConnection(object):
             query = INS if original is None else UPD
             self.__write(query=query, table='registeredPhoneNumberList', column_condition='phoneNumber',
                          phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
+        self.__connection.commit()
         self.__set_mutex_unlock()
         if not original and original[1] != new_user_id:
             return original[1], original[2]
 
+    @check_db_connection
     def register_business_number(self, iso4217: str, business_registration_number: str,
                                  user_id: str, dp_ip: str) -> True | tuple:
         """ Register business number.
         If there is no duplicate business number, just register the business number.
         If there is a duplicate business number, do nothing and return original user's tuple.
         :return: True if there's no duplicate key | False if there's duplicate key
-        :raise OSError: if database connection is not alive.
         """
-        if self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
         identifier = iso4217 + '-' + business_registration_number
         while self.__check_mutex_status():
             pass
@@ -900,32 +849,26 @@ class ExclusiveDatabaseConnection(object):
             self.__write(query=INS, table='registeredBusinessLicenseNumberList', column_condition='identifier',
                          identifier=identifier, userId=user_id, dbIpAddress=dp_ip)  # these args need to be sorted
         #                                                                             # in the order of the db column.
+        self.__connection.commit()
         self.__set_mutex_unlock()
-        if original:
-            return original[0]
-        return True
+        return original[0] if original else True
 
+    @check_db_connection
     def acquire_store_by_identifier_without_mutex(self, identifier: str) -> tuple | None:
         """ Acquire store by identifier without mutex.
         :param identifier: business number identifier
         :return: (user_id, db_ip_address)
         """
-        if self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
         store = self.__read(table='registeredBusinessLicenseNumberList', column_condition='identifier',
                             identifier=identifier)
-        if store is None:
-            return None
-        return store[0], store[1]
+        return None if store is None else store[0], store[1]
 
-    def delete_registered_business_number(self, iso4217: str, business_registration_number: str) -> None:
+    @check_db_connection
+    def delete_registered_business_number(self, iso4217: str, business_registration_number: str):
         """ Delete registered business number.
         :param iso4217: ISO 4217 currency code
         :param business_registration_number: business registration number
-        :raise OSError: if database connection is not alive.
         """
-        if self.__check_db_connection():
-            raise OSError("Database connection is not alive.")
         identifier = iso4217 + '-' + business_registration_number
         while self.__check_mutex_status():
             pass
@@ -933,4 +876,5 @@ class ExclusiveDatabaseConnection(object):
             pass
         self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='identifier',
                      identifier=identifier)
+        self.__connection.commit()
         self.__set_mutex_unlock()
