@@ -56,7 +56,7 @@ def create_app():
         # TODO: check if get_json returns proper type of value or just returns str type
         def check_keys() -> bool:
             for key, T in required_key.items():
-                if key not in personal_json or not personal_json[key] or personal_json[key] is not T:
+                if key not in personal_json or not personal_json[key] or not isinstance(personal_json[key], T):
                     return False
             return True
 
@@ -82,7 +82,7 @@ def create_app():
             Request: {token: "your firebase token"}
         """
         parsed_json = parse_json(request, {'token': str})
-        if parsed_json is not dict:
+        if not isinstance(parsed_json, dict):
             return parsed_json
         try:
             result = ap.update_last_access_date(parsed_json['token'])
@@ -101,7 +101,7 @@ def create_app():
                     {token: firebase_token, business_registration_number: str, pos_number: int}
         """
         parsed_json = parse_json(request, {'token': str})
-        if parsed_json is not dict:
+        if not isinstance(parsed_json, dict):
             return parsed_json
         else:
             token = parsed_json['token']

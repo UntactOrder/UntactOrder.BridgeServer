@@ -207,11 +207,11 @@ class DatabaseConnection(object):
         opr = kwargs.pop('operator', IS)
 
         target_table = table
-        target_col = column_condition if column_condition is list else [column_condition]
+        target_col = column_condition if isinstance(column_condition, list) else [column_condition]
         target_val = [kwargs.pop(col) for col in target_col]
 
         query_target = kwargs.pop('target', AL)
-        if query_target is list:
+        if isinstance(query_target, list):
             query_target = ", ".join(query_target)
 
         sql = f"{SEL} {query_target} {FRM} {target_table}"
@@ -232,14 +232,14 @@ class DatabaseConnection(object):
         opr = kwargs.pop('operator', IS)
 
         if query in (INS, INSIG, REP, ONDUP):
-            kwargs = {key: [val] if val is not list else val for key, val in kwargs.items()}
+            kwargs = {key: [val] if not isinstance(val, list) else val for key, val in kwargs.items()}
             values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
             sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ')'
             if query == ONDUP:
-                target_col = column_condition if column_condition is list else [column_condition]
+                target_col = column_condition if isinstance(column_condition, list) else [column_condition]
                 sql += f" {ONDUP} " + ", ".join([f"{col}=VALUES({col})" for col in target_col]) + ')'
         elif query in (UPD, DEL):
-            target_col = column_condition if column_condition is list else [column_condition]
+            target_col = column_condition if isinstance(column_condition, list) else [column_condition]
             target_val = [kwargs.pop(col) for col in target_col]
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])
@@ -558,7 +558,7 @@ class DatabaseConnection(object):
                                if token is list and some token is not registered, return tuple[str, ..., None, ...].
         """
         table = f"{store_user_id}-{pos_number}-orderToken"
-        if token is str:
+        if isinstance(token, str):
             token = [token]
         result = [self.__read_from_store_db(table, column_condition='orderToken', orderToken=tk) for tk in token]
         if len(result) == 1:
@@ -699,7 +699,10 @@ class DatabaseConnection(object):
         !WARNING!: Table String cannot be duplicated.
         """
         table = f"{store_user_id}-{pos_number}-tableAlias"
-        while amount == 0:
+        repeat_max = 3
+        while amount > 0:
+            if repeat_max < 0:
+                raise RuntimeError(f"Failed to generate {amount} tables.")
             # gen table strings
             table_strings = set()
             while True:
@@ -709,6 +712,7 @@ class DatabaseConnection(object):
                     break
             result = self.__write_to_store_db(INSIG, table, tableString=table_strings)
             amount -= result
+            repeat_max -= 1
 
     @check_db_connection
     def delete_user(self, user_id: str) -> int:

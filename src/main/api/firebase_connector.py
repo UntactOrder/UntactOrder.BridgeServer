@@ -137,22 +137,22 @@ def get_users(identifiers: list | None = None, app=None, uid=None, email=None, p
     if not identifiers:
         identifiers = []
         if uid:
-            if uid is not list:
+            if not isinstance(uid, list):
                 uid = [uid]
             for _uid in uid:
                 identifiers.append(auth.UidIdentifier(_uid))
         if email:
-            if email is not list:
+            if not isinstance(email, list):
                 email = [email]
             for _email in email:
                 identifiers.append(auth.EmailIdentifier(_email))
         if phone:
-            if phone is not list:
+            if not isinstance(phone, list):
                 phone = [phone]
             for _phone in phone:
                 identifiers.append(auth.PhoneIdentifier(_phone))
         if provider:
-            if provider[0] is not list:
+            if not isinstance(provider[0], list):
                 provider = [provider]
             for _provider in provider:
                 identifiers.append(auth.ProviderIdentifier(*_provider))
@@ -162,16 +162,6 @@ def get_users(identifiers: list | None = None, app=None, uid=None, email=None, p
 
     result = auth.get_users(identifiers=identifiers, app=app)
     return result.users
-
-
-def get_user_data(user_id) -> dict:
-    """
-    Get User Data from Firebase.
-    :param user_id: User ID.
-    :return: User Data dict.
-    """
-    user = auth.get_user(user_id)
-    return user.to_dict()
 
 
 def list_users(page=None):
@@ -211,7 +201,7 @@ def send_cloud_message(token, message: str):
     :param token: User Token or User Token List
     :param message: Message to send
     """
-    if token is str:
+    if isinstance(token, str):
         token = [token]
 
     for tok in token:
