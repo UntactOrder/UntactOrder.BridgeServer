@@ -55,7 +55,7 @@ def gen_table_string(length: int = 10):
 
 class DatabaseConnection(object):
     """ Database Connection Class for BridgeServer """
-    __db_server_list: dict[str: DatabaseConnection] = {}  # database server instance list
+    __db_server_list: dict[str, DatabaseConnection] = {}  # database server instance list
 
     if __name__ == '__main__':
         from src.main.settings import RootCA
@@ -101,27 +101,6 @@ class DatabaseConnection(object):
     exclusive = None
 
     @classmethod
-    def get_instance(cls, db_ip=None) -> dict[str: DatabaseConnection] | DatabaseConnection | None:
-        """ Get Database Connection Instance
-        :param db_ip: database ip
-        :return: DatabaseConnection instance
-        """
-        if db_ip is None:
-            return cls.__db_server_list
-        return cls.__db_server_list.get(db_ip, None)
-
-    @classmethod
-    def load_balanced_get_instance(cls) -> DatabaseConnection | None:
-        """ Get Database Connection Instance with Load Balancing """
-        stored = {}
-        for db_ip, db_instance in cls.__db_server_list.items():
-            if db_instance.__check_db_connection():
-                stored[db_ip] = db_instance.calculate_disk_usage()
-        if len(stored) == 0:
-            return None
-        return next(iter(sorted(stored.items(), key=lambda item: item[1])))
-
-    @classmethod
     def load_db_server(cls, exclusive_db: tuple, db_list: list):
         """ Load Database Server Instance
         :param exclusive_db: exclusive database info (db_ip, port, user_name, password)
@@ -135,6 +114,24 @@ class DatabaseConnection(object):
 
         for db_ip, port, user_name, password in db_list:
             cls.__db_server_list[db_ip] = DatabaseConnection(db_ip, port, user_name, password)
+
+    @classmethod
+    def get_instance(cls, db_ip=None) -> dict[str, DatabaseConnection] | DatabaseConnection | None:
+        """ Get Database Connection Instance
+        :param db_ip: database ip
+        :return: DatabaseConnection instance
+        """
+        return cls.__db_server_list[:] if db_ip is None else cls.__db_server_list.get(db_ip, None)
+
+    @classmethod
+    def load_balanced_get_instance(cls) -> DatabaseConnection | None:
+        """ Get Database Connection Instance with Load Balancing """
+        stored = {}
+        for db_ip, db_instance in cls.__db_server_list.items():
+            stored[db_ip] = db_instance.calculate_disk_usage()
+        if len(stored) == 0:
+            return None
+        return next(sorted(stored.items(), key=lambda item: item[1]).items()) sdsfsfefessefes
 
     def __init__(self, db_ip, port, user_name, password):
         self.host = db_ip
@@ -540,11 +537,12 @@ class DatabaseConnection(object):
         return result
 
     @check_db_connection
-    def acquire_store_list(self, user_id: str) -> list[str]:
+    def acquire_store_list(self, user_id: str = None) -> list[str]:
         """ Acquire store list from store database.
         :return: store list | list[str]
         """
-        result = self.search_table_by_name_format(self.__store_database, user_id+'-')
+        result = self.search_table_by_name_format(self.__store_database, '-storeInfo') if user_id \
+            else self.search_table_by_name_format(self.__store_database, user_id+'-')
         if result is None:
             return []
         result = [store.replace('storeInfo', '') for store in result if store.endswith('-storeInfo')]
@@ -591,17 +589,17 @@ class DatabaseConnection(object):
     @check_db_connection
     def acquire_store_info(self, user_id: str, pos_number: int, iso4217=False, business_registration_number=False,
                            public_ip=False, wifi_password=False, gateway_ip=False, gateway_mac=False, pos_ip=False,
-                           pos_mac=False, pos_port=False, business_name=False, business_address=False,
-                           business_description=False, business_phone=False, business_profile_image=False,
-                           business_email=False, business_website=False, business_open_time=False,
-                           business_close_time=False, business_category=False, business_sub_category=False
-                           ) -> tuple[tuple] | None:
+                           pos_mac=False, port=False, business_name=False, business_address=False,
+                           business_zip_code=False, business_phone=False, business_description=False,
+                           business_profile_image=False, business_email=False, business_website=False,
+                           business_open_time=False, business_close_time=False, business_category=False,
+                           business_sub_category=False) -> tuple[tuple] | None:
         """ Acquire store information from store database. """
         args = {'ISO4217': iso4217, 'businessRegistrationNumber': business_registration_number, 'publicIp': public_ip,
                 'wifiPassword': wifi_password, 'gatewayIp': gateway_ip, 'gatewayMac': gateway_mac, 'posIp': pos_ip,
-                'posMac': pos_mac, 'posPort': pos_port, 'businessName': business_name,
-                'businessAddress': business_address, 'businessDescription': business_description,
-                'businessPhoneNumber': business_phone, 'businessProfileImage': business_profile_image,
+                'posMac': pos_mac, 'posPort': port, 'businessName': business_name, 'businessAddress': business_address,
+                'businessZipCode': business_zip_code, 'businessPhoneNumber': business_phone,
+                'businessDescription': business_description, 'businessProfileImage': business_profile_image,
                 'businessEmail': business_email, 'businessWebsite': business_website,
                 'businessOpenTime': business_open_time, 'businessCloseTime': business_close_time,
                 'businessCategory': business_category, 'businessSubCategory': business_sub_category}

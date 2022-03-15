@@ -14,7 +14,6 @@ else:
 
 
 INVALID_ID_TOKEN_ERROR = "Invalid firebase id token."
-DB_CONNECTION_ERROR = "There is no DB connection, so modification work is scheduled."
 
 
 def update_last_access_date(firebase_id_token: str) -> bool:
@@ -38,18 +37,22 @@ def process_sign_in_or_up(firebase_id_token: str, **kwargs):
     :param kwargs:
         if User Sign in/up:
             {sso_token: str, sso_provider: str}
-        elif Store Sign in/up:
-            {business_registration_number: str, pos_number: int}
+        elif Store Sign up:
+            {pos_number: int, business_registration_number: str, iso4217: str}
     """
     if 'sso_token' in kwargs and 'sso_provider' in kwargs:
         # User Sign in/up
-        User.sign_in_or_up(firebase_id_token, kwargs['sso_token'], kwargs['sso_provider'])
+        args = (kwargs['sso_token'], kwargs['sso_provider']), (str, str)
+        method = User.sign_in_or_up
     elif 'iso4217' in kwargs and 'business_registration_number' in kwargs and 'pos_number' in kwargs:
         # Store Sign up
-        Store.sign_up(firebase_id_token, kwargs['iso4217'],
-                      kwargs['business_registration_number'], kwargs['pos_number'])
+        args = (kwargs['pos_number'], kwargs['business_registration_number'], kwargs['iso4217']), (int, str, str)
+        method = Store.sign_up
     else:
         raise ValueError("Invalid arguments.")
+    if not [arg for arg, T in zip(*args) if not isinstance(arg, T)]:
+        raise ValueError("Invalid argument type.")
+    method(firebase_id_token, *args[0])
 
 
 def add_fcm_token(firebase_id_token: str, fcm_token: str, pos_number: int = None) -> bool:
@@ -60,10 +63,7 @@ def add_fcm_token(firebase_id_token: str, fcm_token: str, pos_number: int = None
         unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
     if unit is None:
         raise ValueError(INVALID_ID_TOKEN_ERROR)
-    result = unit.set_new_fcm_token(fcm_token)
-    if result is False:
-        raise OSError(DB_CONNECTION_ERROR)
-    return result
+    return 1 == unit.set_new_fcm_token(fcm_token)
 
 
 def get_fcm_tokens(firebase_id_token: str, pos_number: int = None) -> list[str, ...]:
@@ -77,49 +77,48 @@ def get_fcm_tokens(firebase_id_token: str, pos_number: int = None) -> list[str, 
     return list(unit.fcm_token)
 
 
-def get_data_unit_info(firebase_id_token: str, qr: str = None, pos_number: int = None, info_type: str = None
-                       ) -> tuple | None:
-    """ Gets the data unit info. """
-    if pos_number is None:
-        user = User.get_user_by_firebase_id_token(firebase_id_token)
-        if user is None:
-            raise ValueError(INVALID_ID_TOKEN_ERROR)
-        result = user.get_user_info()
-    else:
-        if qr is None:
-            store = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
-        else:
-
-
-        if store is None:
-            raise ValueError(INVALID_ID_TOKEN_ERROR)
-        match info_type:
-            case "common":
-                result = store.get_store_common_info()
-            case "pos":
-                result = store.get_store_pos_info()
-            case "item":
-                result = store.get_store_item_list()
-            case _:
-                raise ValueError("Invalid info type.")
-    return result
-
-
 def get_store_list(firebase_id_token: str, query_all: bool = False) -> list:
     """ Gets the store list. """
     if query_all:
         if User.get_user_by_firebase_id_token(firebase_id_token) is None:  # check customer is valid
             raise ValueError(INVALID_ID_TOKEN_ERROR)
-        return Store.get_all_store_list()
+        return Store.query_all_store_list()
     else:
         return Store.get_store_list(firebase_id_token)
 
 
-def update_data_unit_info(firebase_id_token: str, **kwargs):
+def update_data_unit_info(firebase_id_token: str, pos_number: int = None, **kwargs) -> bool:
     """ Updates the data unit info. """
+    if pos_number is None:
+        unit = User.get_user_by_firebase_id_token(firebase_id_token)
+        result = unit.update_user_info(**kwargs) if unit is not None else None
+    else:
+        unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
+        result = unit.update_store_info(**kwargs) if unit is not None else None
+    if result is None:
+        raise ValueError(INVALID_ID_TOKEN_ERROR)
+    return len(kwargs) == result
 
-    if result is False:
-        raise OSError(DB_CONNECTION_ERROR)
+
+def get_data_unit_info(firebase_id_token: str, pos_number: int = None,
+                       identifier: str = None, details: str = None, info_type: str = None) -> tuple | None:
+    """ Gets the data unit info. """
+    if pos_number is None:
+        if identifier is None:
+            user = User.get_user_by_firebase_id_token(firebase_id_token)
+            if user is None:
+                raise ValueError(INVALID_ID_TOKEN_ERROR)
+            result = user.get_user_info()
+        else:
+            encrypted = '-' not in details
+            if not encrypted and info_type == 'pos':  # can't get pos info without encrypted details
+                raise ValueError("Not allowed to get the pos number.")
+            result = Store.get_store_info(info_type, firebase_id_token, identifier, details, encrypted)
+    else:
+        store = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
+        if store is None:
+            raise ValueError(INVALID_ID_TOKEN_ERROR)
+        result = store.get_store_info_by_type(info_type)
     return result
 
 
@@ -201,6 +200,4 @@ def delete_data_unit(firebase_id_token: str, pos_number: int = None) -> bool:
     if unit is None:
         raise ValueError(INVALID_ID_TOKEN_ERROR)
     result = unit.delete_user() if pos_number is None else unit.delete_store()
-    if result is False:
-        raise OSError(DB_CONNECTION_ERROR)
-    return result
+    return result == 1

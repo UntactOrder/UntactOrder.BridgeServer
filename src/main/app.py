@@ -5,6 +5,9 @@ Coded with Python 3.10 Grammar by IRACK000
 Description : BridgeServer HTTP Server
 Reference : [create_app] https://stackoverflow.com/questions/57600034/waitress-command-line-returning-malformed-application-when-deploying-flask-web
             [Logging] https://stackoverflow.com/questions/52372187/logging-with-command-line-waitress-serve
+            [flask] https://flask.palletsprojects.com/en/2.0.x/api/
+            [route multi rules] https://stackoverflow.com/questions/17285826/flask-redirecting-multiple-routes
+                                https://hackersandslackers.com/flask-routes/
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from datetime import datetime, time
 
@@ -13,6 +16,15 @@ from waitress import serve
 
 from settings import print, DB_LIST_FILE
 from network import application as ap
+
+
+# HTTP Error Codes
+BAD_REQUEST = 400
+UNAUTHORIZED = 401
+NOT_FOUND = 404
+INTERNAL_SERVER_ERROR = 500
+SERVICE_UNAVAILABLE = 503
+
 
 # TODO: Logging
 
@@ -35,16 +47,33 @@ def create_app():
     service_denial_start = time(3, 0, 0, 0)
     service_denial_end = time(5, 0, 0, 0)
 
-    def server_inspection_time_noticer(func):
+    class JsonParseError(Exception):
+        def __init__(self, msg):
+            super(JsonParseError, self).__init__(msg)
+
+    class UnauthorizedClientError(Exception):
+        def __init__(self, msg):
+            super(UnauthorizedClientError, self).__init__(msg)
+
+    def server_status_noticer(func):
         def notice_service_denial(*args, **kwargs):
+            # notice server inspection time
             if service_denial_start <= datetime.now().time() <= service_denial_end:
-                return make_response(service_denial_msg, 503)
+                return make_response("[ServerInspectionTimeError] " + service_denial_msg, SERVICE_UNAVAILABLE)
+            # run function with error handling
             else:
-                return func(*args, **kwargs)
+                try:
+                    return func(*args, **kwargs)
+                except (ValueError | KeyError | TypeError | JsonParseError) as e:
+                    return make_response(f"[{type(e)}] {str(e)}", BAD_REQUEST)
+                except (OSError | RuntimeError) as e:
+                    return make_response(f"[{type(e)}] {str(e)}", INTERNAL_SERVER_ERROR)
+                except UnauthorizedClientError as e:
+                    return make_response(f"[{type(e)}] {str(e)}", UNAUTHORIZED)
         notice_service_denial.__name__ = func.__name__  # rename function name
         return notice_service_denial
 
-    def parse_json(req: Request, required_key: {str: any}) -> dict | Response:
+    def parse_json(req: Request, required_key: dict[str, type] = None) -> (str, dict) | Response:
         """
         Parse the request json
         :param req: Request object
@@ -52,90 +81,187 @@ def create_app():
         :return: dict when the request is valid, Response object when the request is invalid
         """
         personal_json = req.get_json()
-
-        # TODO: check if get_json returns proper type of value or just returns str type
-        def check_keys() -> bool:
-            for key, T in required_key.items():
+        def check_keys() -> bool:  # TODO: check if get_json returns proper type of value or just returns str type
+            for key, T in (required_key if required_key is not None else {}).items():
                 if key not in personal_json or not personal_json[key] or not isinstance(personal_json[key], T):
                     return False
             return True
-
-        if not personal_json or len(personal_json) >= len(required_key) or not check_keys():
-            return make_response("Json Parse Error", 411)
+        if not personal_json or len(personal_json) >= len(required_key)+1 or not check_keys():
+            raise JsonParseError("Json does not contain required keys.")
+        elif 'token' not in personal_json or not isinstance(personal_json['token'], str):
+            raise UnauthorizedClientError("Authorization token is not found.")
         else:
-            return personal_json
+            return personal_json.pop('token'), personal_json
+
+    @app.errorhandler(NOT_FOUND)
+    def not_found(e):
+        """ Page not found error handler. """
+        return make_response(e, NOT_FOUND)
+
+    @app.errorhandler(BAD_REQUEST)
+    def bad_request(e):
+        """ Bad request error handler. """
+        return make_response(e, BAD_REQUEST)
 
     @app.route('/')
-    @server_inspection_time_noticer
+    @server_status_noticer
     def index():
         """ To check if the server is running """
         return f"Hello, {request.environ.get('HTTP_X_REAL_IP', request.remote_addr)}!"
 
-    # process common request
     #
-    @app.route('/user/last_access_date', methods=['PATCH'])
-    @server_inspection_time_noticer
-    def update_last_access_date() -> jsonify | Response:
+    # process common requests
+    #
+    @app.patch('/user/info/last_access_date')  # common request
+    @server_status_noticer
+    def patch_last_access_date() -> Response:
         """ Process the last access date update - PATCH method
             The client app must send this request once a day when it is turned on.
             Firebase token must be sent with this request.
-            Request: {token: "your firebase token"}
+            Request: Body = {token: your firebase id token}
         """
-        parsed_json = parse_json(request, {'token': str})
-        if not isinstance(parsed_json, dict):
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
             return parsed_json
-        try:
-            result = ap.update_last_access_date(parsed_json['token'])
-        except ValueError as e:
-            return make_response(str(e), 411)
+        result = ap.update_last_access_date(parsed_json[0])
         return jsonify({'status': "success" if result else "fail"})
 
-    @app.route('/sign', methods=['POST'])
-    @server_inspection_time_noticer
-    def process_sign_in_or_up() -> jsonify | Response:
+    @app.post('/sign')  # common request
+    @server_status_noticer
+    def process_sign_in_or_up() -> Response:
         """ Process the sign in or sign up request - POST method
             Request:
                 if User Sign in/up:
-                    {token: firebase_phone_auth_token, sso_token: str, sso_provider: kakao/naver}
-                elif Store Sign in/up:
-                    {token: firebase_token, business_registration_number: str, pos_number: int}
+                    Body = {token: firebase_phone_auth_token, sso_token: str, sso_provider: str = kakao/naver}
+                elif Store Sign up:
+                    Body = {token: firebase_id_token, pos_number: int, business_registration_number: str, iso4217: str}
         """
-        parsed_json = parse_json(request, {'token': str})
-        if not isinstance(parsed_json, dict):
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
             return parsed_json
-        else:
-            token = parsed_json['token']
-            del parsed_json['token']
-        try:
-            ap.process_sign_in_or_up(token, **parsed_json)
-        except (ValueError | KeyError) as e:
-            return make_response(str(e), 411)
-        except OSError as e:
-            return make_response(str(e), 503)
+        ap.process_sign_in_or_up(parsed_json[0], **parsed_json[1])
         return jsonify({'status': "success"})
 
-    # process AndroidClient's & DarwinClient's request
-    #
-    @app.route('/cert_request/<unit_type>', methods=['POST'])
-    @server_inspection_time_noticer
-    def cert_request(unit_type) -> jsonify:
+    @app.patch('/user/fcm_token', defaults={'pos_number': None})  # common request
+    @app.patch('/store/<int:pos_number>/fcm_token')  # only for OrderAssistant & PosServer
+    @server_status_noticer
+    def patch_fcm_token_list(pos_number) -> Response:
+        """ Process the update of fcm token list - PATCH method
+            Request: URL example - /user/fcm_token or /store/0/fcm_token
+                     Body = {token: firebase_id_token, fcm_token: firebase cloud messaging token}
         """
-        Process the certificate request - POST method
-        :param unit_type: Can be "bridge" or "pos"
+        parsed_json = parse_json(request, {'fcm_token': str})
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        result = ap.add_fcm_token(parsed_json[0], **parsed_json[1], pos_number=pos_number)
+        return jsonify({'status': "success" if result else "fail"})
+
+    @app.post('/user/fcm_token', defaults={'pos_number': None})  # common request
+    @app.post('/store/<int:pos_number>/fcm_token')  # only for OA & PS
+    @server_status_noticer
+    def get_fcm_tokens(pos_number) -> Response:
+        """ Get fcm token list - POST method
+            Request: URL example - /user/fcm_token or /store/0/fcm_token
+                     Body = {token: firebase_id_token}
         """
-        client_public_ip = request.environ.get('HTTP_X_REAL_IP', request.remote_addr)  # get external IP
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        result = ap.get_fcm_tokens(parsed_json[0], pos_number)
+        return jsonify({'status': "success", 'result': result})
 
-        # if not '0 < len(json) < 2' or if private_ip from json is not ipv4/ipv6 shape, then it's bad request.
+    @app.post('/store', defaults={'query_type': 'all'})  # only for AndroidClient & DarwinClient
+    @app.post('/store/', defaults={'query_type': 'mine'})  # only for OA & PS
+    @server_status_noticer
+    def get_store_list(query_type: str) -> Response:
+        """ Get store list - POST method
+            Request: URL explained - /store to get all untactorder store list
+                                   - /store/ to get user's store list
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        result = ap.get_store_list(parsed_json[0], query_type == 'all')
+        return jsonify({'status': "success", 'result': result})
 
-        client_private_ip = next(iter(personal_json.values()))  # get internal IP
-        crt_dump, key_dump = proceed_certificate_generation(UnitType.BRIDGE if unit_type == "bridge" else UnitType.POS,
-                                                            client_public_ip, client_private_ip)  # generate certificate
-        respond = {'crt': crt_dump.decode(), 'key': key_dump.decode()}  # create respond object
-        return jsonify(respond)
+    @app.patch('/user/info/', defaults={'pos_number': None})  # common request
+    @app.patch('/store/<int:pos_number>/info/')  # only for OA & PS
+    @server_status_noticer
+    def patch_data_unit_info(pos_number) -> Response:
+        """ Process the update of data unit info - PATCH method
+            Request: URL example - /user/info/ or /store/0/info/
+                     Body = {token: firebase_id_token, something to patch......}
+        """
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        result = ap.update_data_unit_info(parsed_json[0], pos_number, **parsed_json[1])
+        return jsonify({'status': "success" if result else "fail"})
 
-    # process OrderAssistant's & PosServer's request
+    @app.get('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request
+    @app.get('/store/<int:detail>/<string:info_type>/', defaults={'identifier': None})  # only for OA & PS
+    @app.get('/store/<string:identifier>-<string:detail>/<string:info_type>/')  # only for AC & DC
+    def get_data_unit_info(identifier, detail, info_type: str) -> Response:
+        """ Get data unit info - POST method
+            Request: URL example - /user/info/ or /store/0/info/ or /store/identifier-detail/info/
+                     URL explained - /?/info/ to get common information
+                                     /store/?/pos/ to get store's pos server information
+                                     /store/?/item/ to get store's item information
+                                   * /store/identifier-detail-/info/ to get info without encrypted table string
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        if identifier is not None:
+            result = ap.get_data_unit_info(parsed_json[0], None, identifier, detail, info_type)
+        else:
+            result = ap.get_data_unit_info(parsed_json[0], detail, None, None, info_type)
+        return jsonify({'status': "success", 'result': result})
+
+
+    def get_order_history():
+        pass
+
+
+    @app.patch('/delete/user', defaults={'pos_number': None})  # common request
+    @app.patch('/delete/store/<int:pos_number>')  # only for OA & PS
+    def delete_data_unit(pos_number) -> Response:
+        """ Delete data unit - PATCH method
+            Request: URL example - /delete/user or /delete/store/0
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        if isinstance(parsed_json, Response):
+            return parsed_json
+        result = ap.delete_data_unit(parsed_json[0], pos_number)
+        return jsonify({'status': "success" if result else "fail"})
+
+
+    #
+    # process requests only for AndroidClient & DarwinClient
     #
 
+    @app.post('/user/info/<string:data_type>/<int:data_unit_id>'):
+    def get_user_order_token():
+        pass
+
+
+    # process requests only for OrderAssistant & PosServer
+    #
+
+    def get_store_table_list():
+        pass
+
+    def get_store_table_qr():
+        pass
+
+
+    def patch_store_table_list():
+        pass
+
+    def put_new_order_hist()
 
     return app
 

@@ -42,10 +42,10 @@ class CachableUnit(object):
     __cache_max_size__ = 128  # max cache size
     __cache_max_time__ = 60 * 60 * 2  # max cache time (sec) - 2 hours
 
-    @classmethod
-    def ttl_cache_preset(cls):
+    @staticmethod
+    def ttl_cache_preset(maxsize=__cache_max_size__, ttl=__cache_max_time__):
         """ A Preset for ttl caching. """
-        return ttl_cache(maxsize=cls.__cache_max_size__, ttl=cls.__cache_max_time__)
+        return ttl_cache(maxsize=maxsize, ttl=ttl)
 
 
 @CachableUnit.ttl_cache_preset()
@@ -194,7 +194,7 @@ class User(object):
         return self.db_connection.register_user_info(self.user_id, **kwargs)
 
     @property
-    def fcm_token(self) ->  tuple[str, ...]:
+    def fcm_token(self) -> tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id)
 
     def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> int:
@@ -212,13 +212,13 @@ class User(object):
         """ Get detailed order history from order history database.
         !WARNING! User can only access his own order history.
         """
-        history = self.db_connection.acquire_detailed_order_history(self.user_id, target_index, IS)
+        history = self.db_connection.acquire_user_order_history(self.user_id, target_index, IS)
         if history is None:
             raise ValueError("No such order history.")
         business_name, total_price, dp_ip, pointer = history[0]
         result = DatabaseConnection.get_instance(dp_ip).acquire_order_history(pointer)
         if result is None:
-            raise OSError("Database error: No such order history in order history database.")
+            raise RuntimeError("Database error: No such order history in order history database.")
         return (business_name, total_price, result), history
 
     def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
@@ -256,15 +256,23 @@ class Store(object):
             return None
 
     @staticmethod
-    def query_all_store_list() -> list:
+    @ttl_cache(maxsize=1, ttl=60*60*10)  # this cache is for 10 hours
+    def query_all_store_list() -> list:  # for client app's store list
         """ Get all store list from all db. """
-        store_list = []
-        # TODO: fix this
-        return store_list
+        dbs: dict[str, DatabaseConnection] = DatabaseConnection.get_instance(None)
+        if dbs is None:
+            raise OSError("Database not found error.")
+        acquire = lambda db, *args, **kwargs: [args[1], *db.acquire_store_info(*args, **kwargs)]
+        result = []
+        [result.append(filter(None, [
+            acquire(*store.split('-'), iso4217=True, business_registration_number=True, business_name=True,
+                    business_address=True, business_zip_code=False, business_phone=True, business_profile_image=True,
+                    business_category=True) for store in db.acquire_store_list(None)])) for db in dbs.values()]
+        return result
 
     @staticmethod
-    def __access_store_by_identifier(customer_firebase_id_token: str, identifier: str, encrypted_msg: str
-                                     ) -> (User, str, DatabaseConnection):
+    def __access_store_by_identifier(customer_firebase_id_token: str, identifier: str, details: str,
+                                     encrypted: bool = True) -> (User, str, DatabaseConnection):
         """ Access store by identifier. """
         customer = User.get_user_by_firebase_id_token(customer_firebase_id_token)
         if customer is None:
@@ -273,33 +281,25 @@ class Store(object):
         if res is None:
             raise ValueError("No such store.")
         store_user = User(*res[0].split('@'))
-        pos_num, table_string = AES256CBC.get_instance('qr').decrypt(encrypted_msg, store_user.aes_iv).split('/')
+        pos_num, table_string = (AES256CBC.get_instance('qr').decrypt(details, store_user.aes_iv)
+                                 if encrypted else details).split('/')
         store = Store(store_user.user_id, store_user.db_ip, int(pos_num))
         return customer, store, table_string
 
     @staticmethod
-    def get_order_token_by_table_string(customer_firebase_id_token: str, identifier: str,
-                                        encrypted_msg: str) -> str:
+    def get_order_token_by_table_string(*args) -> str:
         """ Get order token by table string. """
-        cus, store, t_str = Store.__access_store_by_identifier(customer_firebase_id_token, identifier, encrypted_msg)
+        cus, store, t_str = Store.__access_store_by_identifier(*args)
         table_number = store.get_store_table_list(t_str)
         if table_number is None:
             raise ValueError("No such table.")
         return store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
 
     @staticmethod
-    def get_store_info(customer_firebase_id_token: str, identifier: str, encrypted_msg: str, info_type: str) -> tuple:
-        """ Get store common info. """
-        cus, store, t_str = Store.__access_store_by_identifier(customer_firebase_id_token, identifier, encrypted_msg)
-        match info_type:
-            case "common":
-                result = store.get_store_common_info()
-            case "pos":
-                result = store.get_store_pos_info()
-            case "item":
-                result = store.get_store_item_list()
-            case _:
-                raise ValueError("Invalid info type.")
+    def get_store_info(info_type: str, *args, **kwargs) -> tuple:
+        """ Get store info. """
+        _, store, _ = Store.__access_store_by_identifier(*args, **kwargs)
+        result = store.get_store_info_by_type(info_type)
         if result is None:
             raise RuntimeError("No data found.")
         return result
@@ -310,7 +310,6 @@ class Store(object):
         :raise ValueError: Wrong firebase id token.
         :raise ValueError: If store already exists.
         :raise ValueError: if monetary_unit_code is not valid
-        :raise OSError: If database connection is lost.
         !WARNING!: If someone repeatedly creates and deletes stores to prevent bridge server from operating smoothly,
                    check the DB server's table change logs and take legal action.
         """
@@ -341,7 +340,7 @@ class Store(object):
         store = Store(user.user_id, user.db_ip, pos_number)
 
         # set store information
-        store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number])
+        store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number], **business_info)
 
     def __init__(self, user_id: str, db_ip: str, pos_number: int):  # !WARNING!: Do not use this constructor directly.
         self.user_id = user_id
@@ -369,12 +368,26 @@ class Store(object):
     def iso4217(self):
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True)[0][0]
 
+    def get_store_info_by_type(self, info_type: str) -> tuple | None:
+        """ Get store info by type. """
+        match info_type:
+            case 'info':
+                result = self.get_store_common_info()
+            case 'pos':
+                result = self.get_store_pos_info()
+            case 'item':
+                result = self.get_store_item_list()
+            case _:
+                raise ValueError("Invalid info type.")
+        return result
+
     def get_store_common_info(self) -> tuple | None:
         """ Get store's common information. """
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number, iso4217=True,
                                                      business_registration_number=True, business_name=True,
-                                                     business_address=True, business_description=True,
-                                                     business_phone=True, business_profile_image=True,
+                                                     business_address=True, busoness_zip_code=True,
+                                                     business_phone=True, business_description=True,
+                                                     business_profile_image=True,
                                                      business_email=True, business_website=True,
                                                      business_open_time=True, business_close_time=True,
                                                      business_category=True, business_sub_category=True)
@@ -383,7 +396,7 @@ class Store(object):
         """ Get store's pos information. """
         return self.db_connection.acquire_store_info(self.user_id, self.pos_number, public_ip=True, wifi_password=True,
                                                      gateway_ip=True, gateway_mac=True, pos_ip=True,
-                                                     pos_mac=True, pos_port=True)
+                                                     pos_mac=True, port=True)
 
     def update_store_info(self, **kwargs) -> int:
         """ Update store information. """
@@ -431,8 +444,8 @@ class Store(object):
     def set_new_order_history(self, customer_emails: list, total_price: int,
                               table_number: int, order_history: list[list]) -> int:
         """ Set new order history. """
-        table = f"{self.iso4217}_{self.business_registration_number}" \
-                f"_{self.pos_number}_{table_number}_{now().strftime('%Y%m%d_%H%M%S%f')}"
+        table = f"{self.iso4217}-{self.business_registration_number}" \
+                f"-{self.pos_number}-{table_number}-{now().strftime('%Y%m%d_%H%M%S%f')}"
         result = self.db_connection.register_order_history(table, order_history)
         tokens = []
         for cus in customer_emails:
@@ -446,6 +459,6 @@ class Store(object):
         """ Delete store. """
         result = self.db_connection.delete_store(self.user_id, self.pos_number)
         user = User(*self.email.split('@'))
-        if user.db_connection.acquire_store_list(user.user_id) is None:
+        if user.db_connection.acquire_store_list(user.user_id) is None:??????
             DatabaseConnection.exclusive.delete_store(self.iso4217, self.business_registration_number)
         return result
