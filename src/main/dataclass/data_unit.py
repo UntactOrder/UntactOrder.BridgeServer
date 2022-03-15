@@ -55,7 +55,7 @@ class User(object):
     """
 
     @staticmethod
-    def get_user_by_firebase_token(firebase_id_token: str) -> User | None:
+    def get_user_by_firebase_id_token(firebase_id_token: str) -> User | None:
         """ Get user by firebase ID token.
             If the user has been disabled, an exception will be raised.
         """
@@ -125,9 +125,8 @@ class User(object):
         # create or update user in database
         user = User(user_id, db.host)
         try:
-            if not user.update_user_info(legal_name=legal_name, user_email=user_email, phone=phone_number,
-                                         age=age, gender=gender, silent=False, init=is_new_user, aes_iv=aes_iv):
-                raise OSError("Database error: User creation failed.")
+            user.update_user_info(legal_name=legal_name, user_email=user_email, phone=phone_number,
+                                  age=age, gender=gender, silent=False, init=is_new_user, aes_iv=aes_iv)
         except Exception as e:
             if is_new_user:
                 fcon.delete_user(fuser.uid)
@@ -135,12 +134,12 @@ class User(object):
                 fcon.update_user(fuser.uid, password=gen_random_password())
             raise e
 
-        # reserve password reset - 10 minutes later
-        Timer(60*10, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
+        # reserve password reset - 5 minutes later
+        Timer(60*5, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
         # Because of this timer, we have to shut down the Nginx reverse proxy server first
         # # before the database server & backend server shutting down.
         # By this way, new login requests will not come in.
-        # And after 10 minutes, the rest of the server can be shut down.
+        # And after 5 minutes, the rest of the server can be shut down.
 
     def __init__(self, user_id: str, db_ip: str):  # !WARNING!: Do not use this constructor directly.
         self.user_id: str = user_id  # kakao/naver + _unique_id
@@ -306,7 +305,7 @@ class Store(object):
         return result
 
     @staticmethod
-    def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str) -> Store:
+    def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str):
         """ Sign in or sign up method for client app login.
         :raise ValueError: Wrong firebase id token.
         :raise ValueError: If store already exists.
@@ -315,8 +314,12 @@ class Store(object):
         !WARNING!: If someone repeatedly creates and deletes stores to prevent bridge server from operating smoothly,
                    check the DB server's table change logs and take legal action.
         """
+        # check pos number range
+        if not 0 <= pos_number < 999:
+            raise ValueError("Pos number is out of range.")
+
         # get user by firebase id token
-        user = User.get_user_by_firebase_token(firebase_id_token)
+        user = User.get_user_by_firebase_id_token(firebase_id_token)
         if user is None:
             raise ValueError("Wrong Firebase token.")
 
@@ -338,9 +341,7 @@ class Store(object):
         store = Store(user.user_id, user.db_ip, pos_number)
 
         # set store information
-        if not store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number]):
-            raise OSError("Database error: User creation failed.")
-        return store
+        store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number])
 
     def __init__(self, user_id: str, db_ip: str, pos_number: int):  # !WARNING!: Do not use this constructor directly.
         self.user_id = user_id

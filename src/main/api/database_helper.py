@@ -699,6 +699,9 @@ class DatabaseConnection(object):
         !WARNING!: Table String cannot be duplicated.
         """
         table = f"{store_user_id}-{pos_number}-tableAlias"
+        registered = self.acquire_store_table_list(store_user_id, pos_number)
+        if registered is not None and not 0 <= len(registered)+amount <= 9999:
+            raise ValueError("Table number is out of range.")
         repeat_max = 3
         while amount > 0:
             if repeat_max < 0:

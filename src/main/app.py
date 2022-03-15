@@ -90,7 +90,7 @@ def create_app():
             return make_response(str(e), 411)
         return jsonify({'status': "success" if result else "fail"})
 
-    @app.route('/sign_up', methods=['POST'])
+    @app.route('/sign', methods=['POST'])
     @server_inspection_time_noticer
     def process_sign_in_or_up() -> jsonify | Response:
         """ Process the sign in or sign up request - POST method

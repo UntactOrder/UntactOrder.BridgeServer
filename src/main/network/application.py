@@ -18,16 +18,18 @@ DB_CONNECTION_ERROR = "There is no DB connection, so modification work is schedu
 
 
 def update_last_access_date(firebase_id_token: str) -> bool:
-    """
-    Updates the last access date of the user.
+    """ Updates the last access date of the user.
     :param firebase_id_token: The firebase id token of the user.
-    :return:
+    :return: True if the update is successful else False.
     """
-    user = User.get_user_by_firebase_token(firebase_id_token)
+    user = User.get_user_by_firebase_id_token(firebase_id_token)
     if user is None:
         return False
-    user.update_user_info()
-    return True
+    try:
+        user.update_user_info()
+        return True
+    except OSError:
+        return False
 
 
 def process_sign_in_or_up(firebase_id_token: str, **kwargs):
@@ -53,7 +55,7 @@ def process_sign_in_or_up(firebase_id_token: str, **kwargs):
 def add_fcm_token(firebase_id_token: str, fcm_token: str, pos_number: int = None) -> bool:
     """ Adds the firebase token to the database. """
     if pos_number is None:
-        unit = User.get_user_by_firebase_token(firebase_id_token)
+        unit = User.get_user_by_firebase_id_token(firebase_id_token)
     else:
         unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
     if unit is None:
@@ -67,7 +69,7 @@ def add_fcm_token(firebase_id_token: str, fcm_token: str, pos_number: int = None
 def get_fcm_tokens(firebase_id_token: str, pos_number: int = None) -> list[str, ...]:
     """ Gets the fcm tokens. """
     if pos_number is None:
-        unit = User.get_user_by_firebase_token(firebase_id_token)
+        unit = User.get_user_by_firebase_id_token(firebase_id_token)
     else:
         unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
     if unit is None:
@@ -79,7 +81,7 @@ def get_data_unit_info(firebase_id_token: str, qr: str = None, pos_number: int =
                        ) -> tuple | None:
     """ Gets the data unit info. """
     if pos_number is None:
-        user = User.get_user_by_firebase_token(firebase_id_token)
+        user = User.get_user_by_firebase_id_token(firebase_id_token)
         if user is None:
             raise ValueError(INVALID_ID_TOKEN_ERROR)
         result = user.get_user_info()
@@ -106,7 +108,7 @@ def get_data_unit_info(firebase_id_token: str, qr: str = None, pos_number: int =
 def get_store_list(firebase_id_token: str, query_all: bool = False) -> list:
     """ Gets the store list. """
     if query_all:
-        if User.get_user_by_firebase_token(firebase_id_token) is None:  # check customer is valid
+        if User.get_user_by_firebase_id_token(firebase_id_token) is None:  # check customer is valid
             raise ValueError(INVALID_ID_TOKEN_ERROR)
         return Store.get_all_store_list()
     else:
@@ -128,7 +130,7 @@ def add_order_history(firebase_id_token: str, order_tokens: dict, order_history:
     :param order_history: The order history.
     """
     # find the user
-    user = User.get_user_by_firebase_token(firebase_id_token)
+    user = User.get_user_by_firebase_id_token(firebase_id_token)
     if user is None:
         return False
 
@@ -161,7 +163,7 @@ def generate_order_token(firebase_id_token: str, store_identifier: str, pos_numb
     :param table_string: The table string.
     """
     # find the user
-    user = User.get_user_by_firebase_token(firebase_id_token)
+    user = User.get_user_by_firebase_id_token(firebase_id_token)
     if user is None:
         return False
 
@@ -193,7 +195,7 @@ def delete_data_unit(firebase_id_token: str, pos_number: int = None) -> bool:
     :param pos_number: The pos number.
     """
     if pos_number is None:
-        unit = User.get_user_by_firebase_token(firebase_id_token)
+        unit = User.get_user_by_firebase_id_token(firebase_id_token)
     else:
         unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
     if unit is None:
