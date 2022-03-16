@@ -75,7 +75,7 @@ class User(object):
         """
         # get phone number from firebase phone auth token
         try:
-            phone_auth = fcon.get_user_by_token(firebase_phone_auth_token)
+            phone_auth = fcon.get_user_by_token(firebase_phone_auth_token, check_email_verified=False)
         except Exception:
             raise ValueError("Invalid firebase phone auth token.")
         phone_number = phone_auth.phone_number
