@@ -69,14 +69,15 @@ def revoke_user_tokens(user_id: str):
     auth.revoke_refresh_tokens(user_id)
 
 
-def get_user_by_token(token: str, app=None, check_revoked=False) -> auth.UserRecord:
+def get_user_by_token(token: str, app=None, check_email_verified=True, check_revoked=False) -> auth.UserRecord:
     """
     Get User by Firebase ID Token.
     !WARNING! - Because of the lru caching, this function might return the email even after the user has been deleted.
     :param token: User Token. (A string of the encoded JWT.)
     :param app: An App instance (optional).
+    :param check_email_verified: If True, check if the user's email is verified.
     :param check_revoked: Boolean, If true, checks whether the token has been revoked or the user disabled (optional).
-    :return: User Email.
+    :return: User Record.
     :raise ValueError: If id_token is a not a string or is empty.
     :raise InvalidIdTokenError: If id_token is not a valid Firebase ID token.
     :raise ExpiredIdTokenError: If the specified ID token has expired.
@@ -89,6 +90,8 @@ def get_user_by_token(token: str, app=None, check_revoked=False) -> auth.UserRec
     decoded_token = auth.verify_id_token(token, app=app, check_revoked=check_revoked)
     uid = decoded_token['uid']
     user = auth.get_user(uid)
+    if check_email_verified and not user.email_verified:
+        raise ValueError("User email is not verified.")  # TODO: check if this works correctly
     return user
 
 
