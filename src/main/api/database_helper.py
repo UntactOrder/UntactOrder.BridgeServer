@@ -331,7 +331,7 @@ class DatabaseConnection(object):
                   f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
         elif 'items' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(100) {NNUL}, price INT {NNUL}, " \
+                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(300) {NNUL}, price INT {NNUL}, " \
                   f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
@@ -357,7 +357,7 @@ class DatabaseConnection(object):
               f"id INT AUTO_INCREMENT {PRIM} {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
               f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
               f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
-              f"menuName VARCHAR(300) {NNUL}, menuPrice INT {NNUL}, menuQuantity INT {NNUL});"
+              f"itemName VARCHAR(300) {NNUL}, itemPrice INT {NNUL}, itemQuantity INT {NNUL});"
         return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
     @check_db_connection
@@ -513,7 +513,7 @@ class DatabaseConnection(object):
         """ Register order history to order history database.
         :param pointer: order history database table name
         :param order_history: order history | list[list, ...]
-        [[firebaseUid: str, orderStatus: int, paymentMethod: int, menuName: str, menuPrice: int, menuQuantity: int],...]
+        [[firebaseUid: str, orderStatus: int, paymentMethod: int, itemName: str, itemPrice: int, itemQuantity: int],...]
         """
         zipper = zip(*order_history)
         firebase_uids = list(next(zipper))
@@ -525,14 +525,16 @@ class DatabaseConnection(object):
         payment_methods = list(next(zipper))
         if [True for method in payment_methods if method > self.HIS.PAY.max_ or method < self.HIS.PAY.min_]:
             raise ValueError("Payment method is out of range.")
-        menu_names = list(next(zipper))  # we don't need to check length of menu name because it is from our database.
-        menu_prices = list(next(zipper))  # for the same reason as the menu name, we don't need to check the length.
-        menu_quantities = list(next(zipper))
-        if [True for quantity in menu_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
+        item_names = list(next(zipper))  # we don't need to check length of item name because it is from our database.
+        item_prices = list(next(zipper))
+        if [True for price in item_prices if price > self.MARIADB_INT_MAX or price < self.MARIADB_INT_MIN]:
+            raise ValueError("MenuPrice is out of range.")
+        item_quantities = list(next(zipper))
+        if [True for quantity in item_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
             raise ValueError("Menu quantity is out of range.")
         result = self.__write_to_order_history_db(INS, pointer, firebaseUid=firebase_uids, orderStatus=order_statuses,
-                                                  paymentMethod=payment_methods, menuName=menu_names,
-                                                  menuPrice=menu_prices, menuQuantity=menu_quantities)
+                                                  paymentMethod=payment_methods, itemName=item_names,
+                                                  itemPrice=item_prices, itemQuantity=item_quantities)
         self.__order_history_database.commit()
         return result
 
@@ -840,12 +842,21 @@ class ExclusiveDatabaseConnection(object):
         return None if store is None else store[0], store[1]
 
     @check_db_connection
-    def delete_registered_business_number(self, iso4217: str, business_registration_number: str):
+    def delete_registered_business_number(self, iso4217: str = None, business_registration_number: str = None,
+                                          user_id: str = None) -> int:
         """ Delete registered business number.
         :param iso4217: ISO 4217 currency code
         :param business_registration_number: business registration number
+        :param user_id: user id
         """
-        identifier = iso4217 + '-' + business_registration_number
-        self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='identifier',
-                     identifier=identifier)
+        if user_id is None:
+            if iso4217 is None or business_registration_number is None:
+                raise ValueError("Either user_id or (iso4217, business_registration_number) must be specified.")
+            identifier = iso4217 + '-' + business_registration_number
+            result = self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='identifier',
+                                  identifier=identifier)
+        else:
+            result = self.__write(query=DEL, table='registeredBusinessLicenseNumberList', column_condition='userId',
+                                  identifier=user_id)
         self.__connection.commit()
+        return result

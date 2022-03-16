@@ -11,16 +11,18 @@ Reference : [create_app] https://stackoverflow.com/questions/57600034/waitress-c
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 from datetime import datetime, time
 
-from flask import Flask, request, jsonify, make_response, Request, Response
+from flask import Flask, request, jsonify, make_response, Request, Response, abort
 from waitress import serve
 
 from settings import print, DB_LIST_FILE
 from network import application as ap
+from network.application import JsonParseError, UnauthorizedClientError, ForbiddenAccessError
 
 
 # HTTP Error Codes
 BAD_REQUEST = 400
 UNAUTHORIZED = 401
+FORBIDDEN = 403
 NOT_FOUND = 404
 INTERNAL_SERVER_ERROR = 500
 SERVICE_UNAVAILABLE = 503
@@ -47,33 +49,27 @@ def create_app():
     service_denial_start = time(3, 0, 0, 0)
     service_denial_end = time(5, 0, 0, 0)
 
-    class JsonParseError(Exception):
-        def __init__(self, msg):
-            super(JsonParseError, self).__init__(msg)
-
-    class UnauthorizedClientError(Exception):
-        def __init__(self, msg):
-            super(UnauthorizedClientError, self).__init__(msg)
-
     def server_status_noticer(func):
         def notice_service_denial(*args, **kwargs):
             # notice server inspection time
             if service_denial_start <= datetime.now().time() <= service_denial_end:
-                return make_response("[ServerInspectionTimeError] " + service_denial_msg, SERVICE_UNAVAILABLE)
+                abort(SERVICE_UNAVAILABLE, description="[ServerInspectionTimeError] " + service_denial_msg)
             # run function with error handling
             else:
                 try:
                     return func(*args, **kwargs)
                 except (ValueError | KeyError | TypeError | JsonParseError) as e:
-                    return make_response(f"[{type(e)}] {str(e)}", BAD_REQUEST)
+                    abort(BAD_REQUEST, description=f"[{type(e).__name__}] {str(e)}")
                 except (OSError | RuntimeError) as e:
-                    return make_response(f"[{type(e)}] {str(e)}", INTERNAL_SERVER_ERROR)
+                    abort(INTERNAL_SERVER_ERROR, description=f"[{type(e).__name__}] {str(e)}")
                 except UnauthorizedClientError as e:
-                    return make_response(f"[{type(e)}] {str(e)}", UNAUTHORIZED)
+                    abort(UNAUTHORIZED, description=f"[{type(e).__name__}] {str(e)}")
+                except ForbiddenAccessError as e:
+                    abort(FORBIDDEN, description=f"[{type(e).__name__}] {str(e)}")
         notice_service_denial.__name__ = func.__name__  # rename function name
         return notice_service_denial
 
-    def parse_json(req: Request, required_key: dict[str, type] = None) -> (str, dict) | Response:
+    def parse_json(req: Request, required_key: dict[str, type] = None) -> (str, dict):
         """
         Parse the request json
         :param req: Request object
@@ -93,16 +89,6 @@ def create_app():
         else:
             return personal_json.pop('token'), personal_json
 
-    @app.errorhandler(NOT_FOUND)
-    def not_found(e):
-        """ Page not found error handler. """
-        return make_response(e, NOT_FOUND)
-
-    @app.errorhandler(BAD_REQUEST)
-    def bad_request(e):
-        """ Bad request error handler. """
-        return make_response(e, BAD_REQUEST)
-
     @app.route('/')
     @server_status_noticer
     def index():
@@ -121,8 +107,6 @@ def create_app():
             Request: Body = {token: your firebase id token}
         """
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         result = ap.update_last_access_date(parsed_json[0])
         return jsonify({'status': "success" if result else "fail"})
 
@@ -137,8 +121,6 @@ def create_app():
                     Body = {token: firebase_id_token, pos_number: int, business_registration_number: str, iso4217: str}
         """
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         ap.process_sign_in_or_up(parsed_json[0], **parsed_json[1])
         return jsonify({'status': "success"})
 
@@ -151,8 +133,6 @@ def create_app():
                      Body = {token: firebase_id_token, fcm_token: firebase cloud messaging token}
         """
         parsed_json = parse_json(request, {'fcm_token': str})
-        if isinstance(parsed_json, Response):
-            return parsed_json
         result = ap.add_fcm_token(parsed_json[0], **parsed_json[1], pos_number=pos_number)
         return jsonify({'status': "success" if result else "fail"})
 
@@ -165,43 +145,41 @@ def create_app():
                      Body = {token: firebase_id_token}
         """
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         result = ap.get_fcm_tokens(parsed_json[0], pos_number)
         return jsonify({'status': "success", 'result': result})
 
     @app.post('/store', defaults={'query_type': 'all'})  # only for AndroidClient & DarwinClient
+    @app.post('/list_store', defaults={'query_type': 'all'})  # only for AC & DC
     @app.post('/store/', defaults={'query_type': 'mine'})  # only for OA & PS
     @server_status_noticer
     def get_store_list(query_type: str) -> Response:
         """ Get store list - POST method
-            Request: URL explained - /store to get all untactorder store list
+            Request: URL explained - /store or /list_store to get all untactorder store list
                                    - /store/ to get user's store list
                      Body = {token: firebase_id_token}
         """
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         result = ap.get_store_list(parsed_json[0], query_type == 'all')
         return jsonify({'status': "success", 'result': result})
 
-    @app.patch('/user/info/', defaults={'pos_number': None})  # common request
-    @app.patch('/store/<int:pos_number>/info/')  # only for OA & PS
+    @app.patch('/user/info/', defaults={'pos_number': None, 'info_type': 'info'})  # common request
+    @app.patch('/store/<int:pos_number>/<string:info_type>/')  # only for OA & PS
     @server_status_noticer
-    def patch_data_unit_info(pos_number) -> Response:
+    def patch_data_unit_info(pos_number, info_type) -> Response:
         """ Process the update of data unit info - PATCH method
-            Request: URL example - /user/info/ or /store/0/info/
+            Request: URL example - /user/info/ or /store/0/info_or_pos_or_item/
                      Body = {token: firebase_id_token, something to patch......}
         """
+        if info_type not in ('info', 'pos', 'item'):
+            abort(404, description="Resource not found")
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         result = ap.update_data_unit_info(parsed_json[0], pos_number, **parsed_json[1])
         return jsonify({'status': "success" if result else "fail"})
 
-    @app.get('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request
-    @app.get('/store/<int:detail>/<string:info_type>/', defaults={'identifier': None})  # only for OA & PS
-    @app.get('/store/<string:identifier>-<string:detail>/<string:info_type>/')  # only for AC & DC
+    @app.post('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request
+    @app.post('/store/<int:detail>/<string:info_type>/', defaults={'identifier': None})  # only for OA & PS
+    @app.post('/store/<string:identifier>-<path:detail>/<string:info_type>/')  # only for AC & DC
+    @server_status_noticer
     def get_data_unit_info(identifier, detail, info_type: str) -> Response:
         """ Get data unit info - POST method
             Request: URL example - /user/info/ or /store/0/info/ or /store/identifier-detail/info/
@@ -211,57 +189,109 @@ def create_app():
                                    * /store/identifier-detail-/info/ to get info without encrypted table string
                      Body = {token: firebase_id_token}
         """
+        if info_type not in ('info', 'pos', 'item'):
+            abort(404, description="Resource not found")
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
         if identifier is not None:
             result = ap.get_data_unit_info(parsed_json[0], None, identifier, detail, info_type)
         else:
             result = ap.get_data_unit_info(parsed_json[0], detail, None, None, info_type)
         return jsonify({'status': "success", 'result': result})
 
-
-    def get_order_history():
-        pass
-
+    @app.post('/user/order_history/',
+              defaults={'query_type': 'start_with', 'pos_num': None, 'table_num': None, 'indx': 0})  # only for AC & DC
+    @app.post('/user/order_history/start_index=<int:indx>',
+              defaults={'start_with': 'start_with', 'pos_num': None, 'table_num': None})  # only for AC & DC
+    @app.post('/user/order_history/<int:indx>/',
+              defaults={'query_type': 'exact', 'pos_num': None, 'table_num': None})  # only for AC & DC
+    @app.post('/store/<int:pos_num>/order_history/<string:indx>/',
+              defaults={'query_type': 'date', 'table_number': None})  # only for OA & PS
+    @app.post('/store/<int:pos_num>/<int:table_num>/order_history/<string:indx>/',
+              defaults={'query_type': 'date_by_table'})  # only for OA & PS
+    @server_status_noticer
+    def get_order_history(query_type: str, indx, pos_num, table_num) -> Response:
+        """ Get order history - POST method
+            Request: URL example - /user/order_history/ or /user/order_history/start_index=0  to get from index 0 to end
+                                 - /user/order_history/0/ to get detailed history exactly from index 0
+                                 - /store/0/order_history/20220316/  to get order history of pos 0
+                                 - /store/0/0/order_history/20220316/  to get order history of table 0 of pos 0
+            Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        result = ap.get_order_history(parsed_json[0], query_type, pos_num, indx, table_num)
+        return jsonify({'status': "success", 'result': result})
 
     @app.patch('/delete/user', defaults={'pos_number': None})  # common request
     @app.patch('/delete/store/<int:pos_number>')  # only for OA & PS
+    @server_status_noticer
     def delete_data_unit(pos_number) -> Response:
         """ Delete data unit - PATCH method
             Request: URL example - /delete/user or /delete/store/0
                      Body = {token: firebase_id_token}
         """
         parsed_json = parse_json(request)
-        if isinstance(parsed_json, Response):
-            return parsed_json
-        result = ap.delete_data_unit(parsed_json[0], pos_number)
-        return jsonify({'status': "success" if result else "fail"})
-
+        ap.delete_data_unit(parsed_json[0], pos_number)
+        return jsonify({'status': "success"})
 
     #
     # process requests only for AndroidClient & DarwinClient
     #
+    @app.post('/store/<string:identifier>-<path:detail>/order_token')
+    @server_status_noticer
+    def get_user_order_token(identifier: str, detail) -> Response:
+        """ Get user order token - POST method
+            Request: URL example - /store/?-?/order_token
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        result = ap.generate_order_token(parsed_json[0], identifier, detail)
+        return jsonify({'status': "success", 'result': result})
 
-    @app.post('/user/info/<string:data_type>/<int:data_unit_id>'):
-    def get_user_order_token():
-        pass
-
-
+    #
     # process requests only for OrderAssistant & PosServer
     #
+    @app.patch('/store/<int:pos_num>/add_table=<int:amount>')
+    @server_status_noticer
+    def patch_store_table_list(pos_number: int, amount: int) -> Response:
+        """ Add table to store - PATCH method
+            Request: URL example - /store/0/add_table=1
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        ap.add_table_to_store(parsed_json[0], pos_number, amount)
+        return jsonify({'status': "success"})
 
-    def get_store_table_list():
-        pass
+    @app.post('/store/<int:pos_num>/', defaults={'table_string': None, 'qr': None})
+    @app.post('/store/<int:pos_num>/table_string=<string:table_string>/', defaults={'qr': None})
+    @app.post('/store/<int:pos_num>/table_string=<string:table_string>/qr', defaults={'qr': 'qr'})
+    @server_status_noticer
+    def get_store_table_info(pos_num: int, table_string, qr) -> Response:
+        """ Get store table info - POST method
+            Request: URL example - /store/0/ or /store/0/table_string=?????????? or /store/0/table_string=??????????/qr
+                     Body = {token: firebase_id_token}
+        """
+        parsed_json = parse_json(request)
+        result = ap.get_store_table_info(parsed_json[0], pos_num, table_string, qr)
+        return jsonify({'status': "success", 'result': result})
 
-    def get_store_table_qr():
-        pass
-
-
-    def patch_store_table_list():
-        pass
-
-    def put_new_order_hist()
+    @app.put('/store/<int:pos_number>/new_order_history')
+    @server_status_noticer
+    def put_new_order_history(pos_number: int) -> Response:
+        """ Put new order history - PUT method
+            Request: URL example - /store/0/new_order_history
+                     Body = {token: firebase_id_token, order_history: {order_token_1: [order_status,
+                                                                                       payment_method,
+                                                                                       item_index,
+                                                                                       item_price,
+                                                                                       item_quantity]
+                                                                       order_token_2: order_history_list_2,
+                                                                       ...
+                                                                       }
+                            }
+        """
+        parsed_json = parse_json(request, {'order_history': dict})
+        ap.add_order_history(parsed_json[0], pos_number, parsed_json[1]['order_history'])
+        return jsonify({'status': "success"})
 
     return app
 

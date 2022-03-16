@@ -225,11 +225,12 @@ class User(object):
         """ This method will be called by Store object. """
         return self.db_connection.register_user_order_history(self.user_id, business_name, total_price, db_ip, pointer)
 
-    def delete_user(self) -> int:
+    def delete_user(self):
         """ Delete user from database. """
         result = self.db_connection.delete_user(self.user_id)
         fcon.delete_user(self.user_id)
-        return result
+        if result == 0:
+            raise ValueError("No such user in database.")
 
 
 @CachableUnit.ttl_cache_preset()
@@ -415,7 +416,7 @@ class Store(object):
         :param table_string: if table string is not None, return table number of table string.
                              if None, return all table list.
         """
-        return self.db_connection.acquire_store_item_list(self.user_id, self.pos_number, table_string)
+        return self.db_connection.acquire_store_table_list(self.user_id, self.pos_number, table_string)
 
     def get_store_qr_code(self, table_string: str = None, check_validity: bool = True) -> str | None:
         """ Get store QR code. """
@@ -441,6 +442,21 @@ class Store(object):
         """
         self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
+    def get_order_history_by_date(self, date: str, table: int = None) -> list[list[int, tuple], ...]:
+        """ Get order history by date(yyyymmdd). """
+        if table is None:
+            table = list(next(zip(*self.get_store_table_list())))
+        result = []
+        for tb in table if isinstance(table, list) else [table]:
+            result.append([tb, self.db_connection.acquire_order_history(
+                f"{self.iso4217}-{self.business_registration_number}-{self.pos_number}-{tb}", date)])
+        return result
+
+    def get_customer_info_by_order_token(self, order_token: str | list[str]) \
+            -> tuple[str, str, str] | tuple[tuple[str, str, str]] | None | tuple[None, ...]:
+        """ Get customer info by order token. """
+        return self.db_connection.acquire_user_by_order_token(self.user_id, self.pos_number, order_token)
+
     def set_new_order_history(self, customer_emails: list, total_price: int,
                               table_number: int, order_history: list[list]) -> int:
         """ Set new order history. """
@@ -457,8 +473,18 @@ class Store(object):
 
     def delete_store(self):
         """ Delete store. """
+        regi_num, iso4217, uid, pos_num, db_ip \
+            = self.business_registration_number, self.iso4217, self.user_id, self.pos_number, self.db_ip
         result = self.db_connection.delete_store(self.user_id, self.pos_number)
-        user = User(*self.email.split('@'))
-        if user.db_connection.acquire_store_list(user.user_id) is None:??????
-            DatabaseConnection.exclusive.delete_store(self.iso4217, self.business_registration_number)
-        return result
+        if result != 0:
+            user = User(*self.email.split('@'))
+            store_list = user.db_connection.acquire_store_list(user.user_id)
+            if store_list:
+                regi_set = {Store(store.split('-')[0], self.db_ip, int(store.split('-')[1])
+                                  ).business_registration_number for store in store_list}
+                if regi_num not in regi_set:
+                    DatabaseConnection.exclusive.delete_registered_business_number(iso4217, regi_num)
+            else:
+                DatabaseConnection.exclusive.delete_registered_business_number(uid)
+        else:
+            raise ValueError("Store does not exist.")
