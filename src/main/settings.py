@@ -11,7 +11,8 @@ import platform
 import requests
 import ssl
 from getpass import getpass
-from OpenSSL import crypto
+from OpenSSL import crypto, SSL
+from datetime import datetime
 
 import base64
 from Crypto import Random
@@ -142,6 +143,140 @@ class NetworkConfig(object):
             return True
 
 
+class SSLCert(object):
+    """ SSL certificate class """
+    @staticmethod
+    def check_cert_validity(crt, key, silent=True):
+        """ Check if certificate is valid with key. """
+        context = SSL.Context(SSL.TLSv1_METHOD)
+        context.use_certificate(crt)
+        context.use_privatekey(key)
+        try:
+            context.check_privatekey()  # check if cert and key are matched
+            if not silent:
+                print("[green]INFO:CrtCheck: Certificate and private key are valid.[/green]")
+            print("")
+        except SSL.Error as e:
+            if not silent:
+                print("[red]ERROR:CrtCheck: Certificate and private key are not valid.[/red]")
+            raise e
+
+    @staticmethod
+    def get_data_from_extensions(crt, extension):
+        """ Get data from extensions. """
+        ext_type = ext.get_short_name().decode()
+        print("The short type name:", ext_type)
+        match ext_type:
+            case "basicConstraints":
+                if "CA:TRUE" == ext.__str__():
+                    print("Certificate is a CA")
+            case "subjectAltName":
+                alt_name = ext.__str__()
+                print("The subjectAltName:", alt_name)
+                alt_list = alt_name.split(", ")
+                # DNS
+                [print(f"DNS.{i+1}:", alt.replace("DNS:", ''))
+                 for i, alt in enumerate([alt for alt in alt_list if alt.startswith("DNS:")])]
+                # IP
+                [print(f"IP.{i+1}:", alt.replace("IP Address:", ''))
+                 for i, alt in enumerate([alt for alt in alt_list if alt.startswith("IP Address:")])]
+        for i in range(0, cert_obj.get_extension_count()):
+            ext = cert_obj.get_extension(i)
+            get_data_from_extensions(ext)
+
+    @staticmethod
+    def is_same_issuer(crt1, crt2) -> bool:
+        """ Check if issuer is same. """
+        if crt1.get_issuer() == crt2.get_issuer():
+            # TODO
+            return True
+        return False
+
+    @staticmethod
+    def is_issued_by_root_ca(root, crt, silent=True) -> bool:
+        """ Check if signed by root CA. """
+        if crt.get_issuer() == root.get_subject():
+            # TODO
+            if not silent:
+                print("Certificate is issued by Root CA")
+            return True
+        return False
+
+    @staticmethod
+    def _parse_timestamp(timestamp):
+        """ Parse timestamp. """
+        return datetime.strptime(timestamp, "%Y%m%d%H%M%SZ")
+
+    @classmethod
+    def get_cert_not_before(cls, crt, silent=True):
+        """ Get not before date. """
+        not_before = cls._parse_timestamp(crt.get_notBefore().decode())
+        if not silent:
+            print("Not before:", not_before)
+        return not_before
+
+    @classmethod
+    def get_cert_not_after(cls, crt, silent=True):
+        """ Get not before date. """
+        not_before = cls._parse_timestamp(crt.get_notAfter().decode())
+        if not silent:
+            print("Not after:", not_before)
+        return not_before
+
+    @staticmethod
+    def has_expired(crt) -> bool:
+        """ Check if certificate is expired. """
+        if crt.has_expired():
+            print("[red]ERROR:CRTCheck: Certificate has expired.[/red]")
+            return True
+        else:
+            print("[green]INFO:CRTCheck: Certificate is valid.[/green]")
+            return False
+
+    @staticmethod
+    def get_cert_serial_number(crt, silent=True):
+        """ Get certificate serial number. """
+        serial_number = crt.get_serial_number()
+        serial = hex(serial_number)
+        serial = serial.rstrip("L").lstrip("0x")
+        serial = serial.zfill(34)
+        serial_list = [serial[s:s+2] for s in range(0, len(serial), 2)]
+        if not silent:
+            print(f"Serial Number: {serial_number} [{':'.join(serial_list)}]")
+
+    @staticmethod
+    def get_cert_signature_algorithm(crt, silent=True):
+        """ Get certificate signature algorithm. """
+        alg = crt.get_signature_algorithm().decode()
+        if not silent:
+            print("Signature Algorithm:", alg)
+
+    @staticmethod
+    def get_cert_subject(crt, silent=True):
+        """ Get certificate subject. """
+        subject = crt.get_subject()
+        sub_list = [subject.countryName, subject.stateOrProvinceName, subject.localityName, subject.organizationName,
+                    subject.organizationalUnitName, subject.commonName, subject.emailAddress]
+        if not silent:
+            print("Subject:", subject)
+            print("] Country Name:", sub_list[0])
+            print("] State or Province Name:", sub_list[1])
+            print("] Locality Name:", sub_list[2])
+            print("] Organization Name:", sub_list[3])
+            print("] Organization Unit Name:", sub_list[4])
+            print("] Common Name:", sub_list[5])
+            print("] Email Address:", sub_list[6])
+        return sub_list
+
+    @staticmethod
+    def get_cert_version(crt, silent=True):
+        """ Get certificate version. """
+        version = crt.get_version()
+        if not silent:
+            print("The certificate version:", version)
+        return version
+
+
 class RootCA(object):
     """ RootCA Certificate Storage Object """
 
@@ -203,13 +338,13 @@ class ServerCert(object):
     """ BridgeServer Keypair Storage Object """
 
     global __CERT_DIR, __SETTING_FILE_EXT
-    __CERT_FILE__ = path.join(__CERT_DIR, f"{unit_type}.crt")
-    __KEY_FILE__ = path.join(__CERT_DIR, f"{unit_type}.key")
-    __PASS_FILE__ = path.join(__CERT_DIR, "ssl.pass")
+    __CERT_FILE = path.join(__CERT_DIR, f"{unit_type}.crt")
+    __KEY_FILE = path.join(__CERT_DIR, f"{unit_type}.key")
+    __PASS_FILE = path.join(__CERT_DIR, "ssl.pass")
 
     def __init__(self):
         # check if certificate is exist.
-        if not path.isfile(__CERT_FILE__):
+        if not path.isfile(self.__CERT_FILE):
             print(f"Certificate files not found. You must init(generate a certificate) first.")
             sys.exit(1)
 
