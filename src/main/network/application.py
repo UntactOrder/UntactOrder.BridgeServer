@@ -133,7 +133,14 @@ def get_data_unit_info(firebase_id_token: str, pos_number: int = None,
         store = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
         if store is None:
             raise UnauthorizedClientError(INVALID_ID_TOKEN_ERROR)
-        result = store.get_store_info_by_type(info_type)
+        if info_type != 'info_by_token':
+            result = store.get_store_info_by_type(info_type)
+        else:
+            inf = store.get_customer_info_by_order_token(identifier)  # identifier is order token (sorry for the naming)
+            if inf is None:
+                raise ValueError("Invalid order token.")
+            token, email, table = inf
+            result = (token, User(*email.split('@')).phone_number, table)
     return result
 
 
@@ -205,7 +212,7 @@ def get_order_history(firebase_id_token: str, query_type: str, pos_number: int =
     return result
 
 
-def generate_order_token(firebase_id_token: str, store_identifier: str, details: str) -> string:
+def generate_order_token(firebase_id_token: str, store_identifier: str, details: str) -> (int, str):
     """ Generates the order token. 1 token by 1 user in 1 store in 1 pos in 1 table at the same time.
     IF token is already generated, it will return the token.
     :param firebase_id_token: The firebase id token of the user.

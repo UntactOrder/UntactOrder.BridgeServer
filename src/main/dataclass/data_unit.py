@@ -288,13 +288,14 @@ class Store(object):
         return customer, store, table_string
 
     @staticmethod
-    def get_order_token_by_table_string(*args) -> str:
+    def get_order_token_by_table_string(*args) -> (int, str):
         """ Get order token by table string. """
         cus, store, t_str = Store.__access_store_by_identifier(*args)
         table_number = store.get_store_table_list(t_str)
         if table_number is None:
             raise ValueError("No such table.")
-        return store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
+        return table_number, \
+               store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
 
     @staticmethod
     def get_store_info(info_type: str, *args, **kwargs) -> tuple:

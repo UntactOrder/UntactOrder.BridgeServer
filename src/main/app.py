@@ -177,25 +177,33 @@ def create_app():
         return jsonify({'status': "success" if result else "fail"})
 
     @app.post('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request
+    @app.post('/user/info/order_token=True',
+              defaults={'detail': None, 'identifier': None, 'info_type': 'info_by_token'})  # only for PS & OA
     @app.post('/store/<int:detail>/<string:info_type>/', defaults={'identifier': None})  # only for OA & PS
     @app.post('/store/<string:identifier>-<path:detail>/<string:info_type>/')  # only for AC & DC
     @server_status_noticer
     def get_data_unit_info(identifier, detail, info_type: str) -> Response:
         """ Get data unit info - POST method
-            Request: URL example - /user/info/ or /store/0/info/ or /store/identifier-detail/info/
-                     URL explained - /?/info/ to get common information
+            Request: URL example - /user/info/ or /user/info/order_token=True
+                                               or /store/0/info/ or /store/identifier-detail/info/
+                     URL explained - /user/info/ to get user information
+                                     /user/info/order_token=True to get user information by order token
                                      /store/?/pos/ to get store's pos server information
                                      /store/?/item/ to get store's item information
                                    * /store/identifier-detail-/info/ to get info without encrypted table string
                      Body = {token: firebase_id_token}
+                            if /user/info/order_token=True then {token: firebase_id_token,
+                                                                 pos_number: pos_number, order_token: order_token}
         """
-        if info_type not in ('info', 'pos', 'item'):
+        if info_type not in ('info', 'info_by_token', 'pos', 'item'):
             abort(404, description="Resource not found")
-        parsed_json = parse_json(request)
+        parsed = \
+            parse_json(request, None if info_type != 'info_by_token' else {'pos_number': int, 'order_token': str})
         if identifier is not None:
-            result = ap.get_data_unit_info(parsed_json[0], None, identifier, detail, info_type)
+            result = ap.get_data_unit_info(parsed[0], None, identifier, detail, info_type)
         else:
-            result = ap.get_data_unit_info(parsed_json[0], detail, None, None, info_type)
+            result = ap.get_data_unit_info(parsed[0], detail if info_type == 'info' else parsed[1]['pos_num'],
+                                           None if info_type == 'info' else parsed[1]['order_token'], None, info_type)
         return jsonify({'status': "success", 'result': result})
 
     @app.post('/user/order_history/',
