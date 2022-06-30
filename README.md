@@ -38,7 +38,7 @@ UntactOrder Bridge Server(언택트오더 시스템 브릿지 서버; Intermedia
 # [EN] Usage Instruction / [KO] 사용법
 ## [EN] Disclaimer / [KO] 디스클레이머
 * [EN] This software is provided "as is" without warranty of any kind.
-* [EN] The author does not guarantee the stability/security//validity/etc of this software.
+* [EN] The author does not guarantee the stability/security/validity/etc of this software.
 * [KO] 이 소프트웨어는 어떠한 종류의 보증도 없이 "있는 그대로" 제공됩니다.
 * [KO] 저자는 이 소프트웨어의 안정성/보안/유효성/등을 보장하지 않습니다.
 
