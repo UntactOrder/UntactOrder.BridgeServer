@@ -13,6 +13,7 @@ import ssl
 from getpass import getpass
 from OpenSSL import crypto, SSL
 from datetime import datetime
+from configparser import ConfigParser
 
 import base64
 from Crypto import Random
@@ -65,7 +66,11 @@ if not path.isdir(__SETTING_DIR):
 __SETTING_FILE_EXT = path.join(__SETTING_DIR, f".{unit_type}setting")
 DB_LIST_FILE = path.join(__SETTING_DIR, "db" + __SETTING_FILE_EXT)
 FIREBASE_API_KEY_FILE = path.join(__SETTING_DIR, "firebase" + __SETTING_FILE_EXT)
-SSO_API_KEY_FILE = path.join(__SETTING_DIR, "sso" + __SETTING_FILE_EXT)
+API_KEY_FILE = path.join(__SETTING_DIR, "api" + __SETTING_FILE_EXT)
+
+# api settings
+api_config = ConfigParser()
+api_config.read(API_KEY_FILE)
 
 
 class NetworkConfig(object):

@@ -310,7 +310,7 @@ class Store(object):
     def sign_up(firebase_id_token: str, pos_number: int, business_registration_number: str, iso4217: str):
         """ Sign in or sign up method for client app login.
         :raise ValueError: Wrong firebase id token.
-        :raise ValueError: If store already exists.
+        :raise ValueError: If store already exists or in case of wrong business number.
         :raise ValueError: if monetary_unit_code is not valid
         !WARNING!: If someone repeatedly creates and deletes stores to prevent bridge server from operating smoothly,
                    check the DB server's table change logs and take legal action.
@@ -328,6 +328,8 @@ class Store(object):
         iso4217 = iso4217.upper()
         Currency(iso4217)  # check if the code is valid  ex: KRW, USD, JPY, EUR, GBP
         business_info = get_business_info(business_registration_number, iso4217)
+        if not business_info:
+            raise ValueError("Wrong business registration number.")
 
         # check if store already exists
         store_list = user.db_connection.acquire_store_list(user.user_id)
@@ -342,7 +344,7 @@ class Store(object):
         store = Store(user.user_id, user.db_ip, pos_number)
 
         # set store information
-        store.update_user_info(**res, init=True, initializer=[iso4217, business_registration_number], **business_info)
+        store.update_store_info(**res, init=True, initializer=[iso4217, business_registration_number], **business_info)
 
     def __init__(self, user_id: str, db_ip: str, pos_number: int):  # !WARNING!: Do not use this constructor directly.
         self.user_id = user_id
