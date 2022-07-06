@@ -543,11 +543,11 @@ class DatabaseConnection(object):
         """ Acquire store list from store database.
         :return: store list | list[str]
         """
-        result = self.search_table_by_name_format(self.__store_database, '-storeInfo') if user_id \
+        result = self.search_table_by_name_format(self.__store_database, '-storeInfo') if not user_id \
             else self.search_table_by_name_format(self.__store_database, user_id+'-')
         if result is None:
             return []
-        result = [store.replace('storeInfo', '') for store in result if store.endswith('-storeInfo')]
+        result = [store.replace('-storeInfo', '') for store in result if store.endswith('-storeInfo')]
         return result
 
     @check_db_connection
@@ -800,7 +800,7 @@ class ExclusiveDatabaseConnection(object):
         return None if len(result) == 0 else result
 
     @check_db_connection
-    def register_phone_number(self, phone: str, new_user_id: str, new_dp_ip: str) -> None | tuple:
+    def register_phone_number(self, phone: str, new_user_id: str, new_db_ip: str) -> None | tuple:
         """ Register phone number.
         If there is no duplicate phone number, just register the phone number.
         If there is a duplicate phone number, overwrite the original value to new value
@@ -811,14 +811,14 @@ class ExclusiveDatabaseConnection(object):
         if original is None or original[1] != new_user_id:
             query = INS if original is None else UPD  # TODO: make sure this doesn't create a duplicate problem
             self.__write(query=query, table='registeredPhoneNumberList', column_condition='phoneNumber',
-                         phoneNumber=phone, userId=new_user_id, dbIpAddress=new_dp_ip)
+                         phoneNumber=phone, userId=new_user_id, dbIpAddress=new_db_ip)
         self.__connection.commit()
         if not original and original[1] != new_user_id:
             return original[1], original[2]
 
     @check_db_connection
     def register_business_number(self, iso4217: str, business_registration_number: str,
-                                 user_id: str, dp_ip: str):
+                                 user_id: str, db_ip: str):
         """ Register business number.
         If there is no duplicate business number, just register the business number.
         If there is a duplicate business number, do nothing and return original user's tuple.
@@ -826,7 +826,7 @@ class ExclusiveDatabaseConnection(object):
         """
         identifier = iso4217 + '-' + business_registration_number
         result = self.__write(query=INSIG, table='registeredBusinessLicenseNumberList', column_condition='identifier',
-                              identifier=identifier, userId=user_id, dbIpAddress=dp_ip)
+                              identifier=identifier, userId=user_id, dbIpAddress=db_ip)
         if result == 0:
             raise ValueError("Business registration number already exists.")
         self.__connection.commit()
