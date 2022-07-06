@@ -1,8 +1,16 @@
 import unittest
 from unittest import mock
-import mock_settings
 
-with mock.patch.dict('sys.modules', settings=mock_settings):
+
+class MockSettings(object):
+    from configparser import ConfigParser
+
+    API_KEY_FILE = "../main/data/api.bridgesetting"
+    api_config = ConfigParser()
+    api_config.read(API_KEY_FILE)
+
+
+with mock.patch.dict('sys.modules', settings=MockSettings):
     from src.main.api.sso_provider import SSOProvider
 
 
