@@ -14,7 +14,7 @@ assignees: ''
 
 </pre>
 
-## 🤗 Describe the solution you'd like
+## 🤗 Describe the solution you'd like.
 > [EN] A clear and concise description of what you want to happen.
 > [KO] 어떤 기능이 있으면 좋겠는지 자세히 설명해주세요.
 
@@ -22,7 +22,7 @@ assignees: ''
 
 </pre>
 
-## 🧐 Describe alternatives you've considered
+## 🧐 Describe alternatives you've considered.
 > [EN] A clear and concise description of any alternative solutions or features you've considered.
 > [KO] 혹시 다른 대안들을 생각해본 적이 있다면 함께 적어주세요.
 
