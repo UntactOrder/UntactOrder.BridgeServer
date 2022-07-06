@@ -1,5 +1,5 @@
 Flask~=2.0.2
-waitress~=2.0.0
+waitress~=2.1.1
 requests~=2.27.1
 pyOpenSSL~=22.0.0
 

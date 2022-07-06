@@ -148,7 +148,7 @@ def create_app():
         result = ap.get_fcm_tokens(parsed_json[0], pos_number)
         return jsonify({'status': "success", 'result': result})
 
-    @app.post('/store', defaults={'query_type': 'all'})  # only for AndroidClient & DarwinClient
+    '''@app.post('/store', defaults={'query_type': 'all'})  # only for AndroidClient & DarwinClient
     @app.post('/list_store', defaults={'query_type': 'all'})  # only for AC & DC
     @app.post('/store/', defaults={'query_type': 'mine'})  # only for OA & PS
     @server_status_noticer
@@ -160,7 +160,7 @@ def create_app():
         """
         parsed_json = parse_json(request)
         result = ap.get_store_list(parsed_json[0], query_type == 'all')
-        return jsonify({'status': "success", 'result': result})
+        return jsonify({'status': "success", 'result': result})'''
 
     @app.patch('/user/info/', defaults={'pos_number': None, 'info_type': 'info'})  # common request
     @app.patch('/store/<int:pos_number>/<string:info_type>/')  # only for OA & PS
