@@ -37,7 +37,8 @@ IS, NOT, GT, LT, GTE, LTE = "=", "<>", ">", "<", ">=", "<="
 
 AL = "*"
 
-_V_ = lambda value: f"{value}" if value is int else f"'{value}'"
+_V_ = lambda value: f"{value}" \
+    if isinstance(value, int) else "\'" + value.replace("\'", "\\\'").replace("\"", "\\\"") + "\'"
 # -----------------------------------------------------------------------------
 
 
@@ -78,7 +79,7 @@ class DatabaseConnection(object):
     class USR(object):
         class GENDER(object):
             min_, max_ = 0, 4
-            none, male, female, neutral, etc = range(min_, max_+1)
+            none, male, female, neutral, etc = range(min_, max_ + 1)
 
         class ALT(object):
             insert, update, delete = range(3)
@@ -90,12 +91,12 @@ class DatabaseConnection(object):
     class HIS(object):
         class STAT(object):
             min_, max_ = 0, 4
-            ordered, paid, cancelled, delivered, returned = range(min_, max_+1)
+            ordered, paid, cancelled, delivered, returned = range(min_, max_ + 1)
 
         class PAY(object):
             min_, max_ = 0, 12
             (etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,
-             phone_pay, wechat_pay, ali_pay, jtnet_pay) = range(min_, max_+1)
+             phone_pay, wechat_pay, ali_pay, jtnet_pay) = range(min_, max_ + 1)
 
     # exclusive database
     exclusive = None
@@ -131,7 +132,7 @@ class DatabaseConnection(object):
             stored[db_ip] = db_instance.calculate_disk_usage()
         if len(stored) == 0:
             return None
-        return next(sorted(stored.items(), key=lambda item: item[1]).items()) sdsfsfefessefes
+        return next(sorted(stored.items(), key=lambda item: item[1]).items())
 
     def __init__(self, db_ip, port, user_name, password):
         self.host = db_ip
@@ -231,7 +232,7 @@ class DatabaseConnection(object):
         if query in (INS, INSIG, REP, ONDUP):
             kwargs = {key: [val] if not isinstance(val, list) else val for key, val in kwargs.items()}
             values = [", ".join(map(str, row)) for row in zip(*kwargs.values())]
-            sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(values) + ')'
+            sql = f"{query} {ITO} {table} (" + ", ".join(kwargs) + f") {VAL} (" + "), (".join(map(_V_, values)) + ')'
             if query == ONDUP:
                 target_col = column_condition if isinstance(column_condition, list) else [column_condition]
                 sql += f" {ONDUP} " + ", ".join([f"{col}=VALUES({col})" for col in target_col]) + ')'
@@ -239,7 +240,7 @@ class DatabaseConnection(object):
             target_col = column_condition if isinstance(column_condition, list) else [column_condition]
             target_val = [kwargs.pop(col) for col in target_col]
             if query == UPD:
-                sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={val}" for col, val in kwargs.items()])
+                sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={_V_(val)}" for col, val in kwargs.items()])
             else:
                 sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
             if target_val:
@@ -544,7 +545,7 @@ class DatabaseConnection(object):
         :return: store list | list[str]
         """
         result = self.search_table_by_name_format(self.__store_database, '-storeInfo') if not user_id \
-            else self.search_table_by_name_format(self.__store_database, user_id+'-')
+            else self.search_table_by_name_format(self.__store_database, user_id + '-')
         if result is None:
             return []
         result = [store.replace('-storeInfo', '') for store in result if store.endswith('-storeInfo')]
@@ -720,10 +721,10 @@ class DatabaseConnection(object):
     @check_db_connection
     def delete_user(self, user_id: str) -> int:
         """ Delete user from user database. """
-        result = self.__write_to_user_db(DRP_TB, user_id+'-userInfo')
-        self.__write_to_user_db(DRP_TB, user_id+'-alterHis')
-        self.__write_to_user_db(DRP_TB, user_id+'-fcmToken')
-        self.__write_to_user_db(DRP_TB, user_id+'-orderHis')
+        result = self.__write_to_user_db(DRP_TB, user_id + '-userInfo')
+        self.__write_to_user_db(DRP_TB, user_id + '-alterHis')
+        self.__write_to_user_db(DRP_TB, user_id + '-fcmToken')
+        self.__write_to_user_db(DRP_TB, user_id + '-orderHis')
         self.__user_database.commit()
         return result
 
