@@ -3,6 +3,7 @@ waitress~=2.1.1
 requests~=2.27.1
 pyOpenSSL~=22.0.0
 
+python-dateutil~=2.8.2
 geocoder~=1.38.1
 netifaces~=0.11.0
 
