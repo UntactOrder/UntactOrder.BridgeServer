@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
+cd src/main
+python3 ./init.py && echo "INFO:server init done" || exit 1
+
 echo -n "INFO:get passphrase and certificate key with permission of "
 whoami
 passphrase="$(</etc/bridgeserver/ssl.pass)"
 key="$(cat /etc/bridgeserver/bridge.key)"
 
 run_date=`date "+%Y.%m.%d_%H:%M:%S"`
-
-cd src/main
-python3 ./init.py && echo "INFO:server init done" || exit 1
 
 sudo -u ubuntu bash << EOF
 echo -n "INFO:server open with permission of "
