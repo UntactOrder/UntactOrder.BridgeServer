@@ -164,14 +164,14 @@ class DatabaseConnection(object):
         """ Check if the database connection is alive.
         :raise OSError: if the database connection is not alive
         """
-        def check_ping(reconnect=True):
+        def check_ping(reconnect=True, *args, **kwargs):
             try:
                 func.__self__.__user_database.ping(reconnect=reconnect)
                 func.__self__.__store_database.ping(reconnect=reconnect)
                 func.__self__.__order_history_database.ping(reconnect=reconnect)
             except Exception as e:
                 raise OSError("Database Connection Error:", e)
-            return func
+            return func(*args, **kwargs)
         return check_ping
 
     @check_db_connection
@@ -767,12 +767,12 @@ class ExclusiveDatabaseConnection(object):
     @staticmethod
     def check_db_connection(func):
         """ Check if database connection is alive. And if not, reconnect. """
-        def check_ping():  # TODO: check if this method slows down the server.
+        def check_ping(*args, **kwargs):  # TODO: check if this method slows down the server.
             try:
                 func.__self__.__connection.ping(reconnect=True)
             except Exception as e:
                 raise OSError("Database connection is not alive. Cannot proceed:", e)
-            return func
+            return func(*args, **kwargs)
         return check_ping
 
     def __write(self, query, table, column_condition, **kwargs) -> int:

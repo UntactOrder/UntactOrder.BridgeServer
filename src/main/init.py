@@ -70,4 +70,17 @@ if not path.isfile(FIREBASE_API_KEY_FILE):
             firebase += line + '\n'
         json.dump(firebase, file)
 if not path.isfile(API_KEY_FILE):
-    ConfigParser
+    config = ConfigParser()
+    from api.sso_provider import SSOProvider
+    from api.store_informator import iso4272_list
+    for provider in SSOProvider.provider_list + iso4272_list:
+        if input("Do you want to set up for " + provider + "? (y to yes) ") == 'y':
+            config.setboolean(provider, "is_offered", True)
+            config.set(provider, "client_id", input("Please enter your " + provider + " Client ID: "))
+            config.set(provider, "client_secret", input("Please enter your " + provider + " Client Secret: "))
+        else:
+            config.setboolean(provider, "is_offered", False)
+            config.set(provider, "client_id", "")
+            config.set(provider, "client_secret", "")
+    with open(API_KEY_FILE, 'w+', encoding='utf-8') as file:
+        config.write(file)
