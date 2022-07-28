@@ -15,6 +15,7 @@ from getpass import getpass
 from OpenSSL import crypto, SSL
 from datetime import datetime
 from configparser import ConfigParser
+from dateutil.relativedelta import relativedelta
 
 import base64
 from Crypto import Random
@@ -159,11 +160,11 @@ class SSLCert(object):
         try:
             context.check_privatekey()  # check if cert and key are matched
             if not silent:
-                print("[green]INFO:CrtCheck: Certificate and private key are valid.[/green]")
+                print("[green]INFO: CrtCheck: Certificate and private key are valid.[/green]")
             print("")
         except SSL.Error as e:
             if not silent:
-                print("[red]ERROR:CrtCheck: Certificate and private key are not valid.[/red]")
+                print("[red]ERROR: CrtCheck: Certificate and private key are not valid.[/red]")
             raise e
 
     @staticmethod
@@ -179,12 +180,12 @@ class SSLCert(object):
             match ext_type:
                 case "subjectKeyIdentifier":
                     if not silent:
-                        print(ext.__str__())
-                    datas['subjectKeyIdentifier'] = ext.__str__()
+                        print(ext.__str__().strip())
+                    datas['subjectKeyIdentifier'] = ext.__str__().strip()
                 case "authorityKeyIdentifier":
                     if not silent:
-                        print(ext.__str__())
-                    datas['authorityKeyIdentifier'] = ext.__str__()
+                        print(ext.__str__().strip())
+                    datas['authorityKeyIdentifier'] = ext.__str__().strip()
                 case "basicConstraints":
                     if "CA:TRUE" == ext.__str__():
                         if not silent:
@@ -219,7 +220,7 @@ class SSLCert(object):
         if crt.get_issuer() == root.get_subject():
             crt1_ext = cls.get_data_from_extensions(crt)
             root_ext = cls.get_data_from_extensions(root)
-            result = crt1_ext['authorityKeyIdentifier'] == root_ext['subjectKeyIdentifier']
+            result = crt1_ext['authorityKeyIdentifier'] == "keyid:" + root_ext['subjectKeyIdentifier']
             if not silent and result:
                 print("Certificate is issued by Root CA")
             return result
@@ -250,10 +251,10 @@ class SSLCert(object):
     def has_expired(crt) -> bool:
         """ Check if certificate is expired. """
         if crt.has_expired():
-            print("[red]ERROR:CRTCheck: Certificate has expired.[/red]")
+            print("[red]ERROR: CRTCheck: Certificate has expired.[/red]")
             return True
         else:
-            print("[green]INFO:CRTCheck: Certificate is valid.[/green]")
+            print("[green]INFO: CRTCheck: Certificate is valid.[/green]")
             return False
 
     @staticmethod
@@ -319,7 +320,7 @@ class RootCA(object):
         # check if root CA ip setting is exists.
         if not path.isfile(self.__CERT_SERVER_FILE):
             print("Root-CA ip address setting is not found. Please set the ip address of the root CA.")
-            with open(self.__CERT_SERVER_FILE, 'w+') as file:
+            with open(self.__CERT_SERVER_FILE, 'w+', encoding='utf-8') as file:
                 self.IP_ADDRESS = input("Root-CA IP Address: ")
                 file.write(self.IP_ADDRESS)
             chmod(self.__CERT_SERVER_FILE, 0o644)
@@ -333,7 +334,7 @@ class RootCA(object):
         print("Root CA certificate is received.")
         __NEW_CA_CRT = crypto.load_certificate(FILETYPE_PEM, new_cert.encode('utf-8'))
         if not path.isfile(self.__CERT_SERVER_FILE):
-            with open(self.__ROOT_CA_FILE, 'r') as ca_crt_file:
+            with open(self.__ROOT_CA_FILE, 'r', encoding='utf-8') as ca_crt_file:
                 self.__CA_CRT = crypto.load_certificate(FILETYPE_PEM, ca_crt_file.read().encode('utf-8'))
         else:
             self.__CA_CRT = None
@@ -344,14 +345,14 @@ class RootCA(object):
                       f"Do you want to overwrite new certificate to system?[/red] (y to yes) : ",
                       end='', flush=True)
             if self.__CA_CRT is None or input() == 'y':
-                with open(self.__ROOT_CA_FILE, 'w+') as crt:
+                with open(self.__ROOT_CA_FILE, 'w+', encoding='utf-8') as crt:
                     crt.write(new_cert)
                 chmod(self.__ROOT_CA_FILE, 0o644)
                 self.__CA_CRT = __NEW_CA_CRT
                 print("[blue]> Overwrite Success.[/blue]")
             else:
                 if self.__CA_CRT.get_subject().CN != __NEW_CA_CRT.get_subject().CN:
-                    with open(self.__CERT_SERVER_FILE, 'w+') as file:
+                    with open(self.__CERT_SERVER_FILE, 'w+', encoding='utf-8') as file:
                         file.write(self.__CA_CRT.get_subject().CN)
                     chmod(self.__CERT_SERVER_FILE, 0o644)
                 print("[blue]> Overwrite Aborted. Suppress Warning.[/blue]")
@@ -391,7 +392,7 @@ class ServerCert(object):
     def get_file_paths(cls):
         return cls.__KEY_FILE, cls.__PASS_FILE
 
-    def __init__(self, pass_word: str = "", enc_key: str = ""):
+    def __init__(self, enc_key: str = "", pass_word: str = ""):
         # check if certificate is exist.
         if not path.isfile(self.__CERT_FILE):
             raise Exception(f"BridgeServer Certificate files not found. You must init(generate a certificate) first.")
@@ -401,45 +402,54 @@ class ServerCert(object):
         #
         # check if redirection flag is set.
         if [i for i, arg in enumerate(sys.argv) if '--po=' in arg]:  # if --po= is in argv => redirect.
-            __PASSPHRASE__ = input()
-            __CA_ENCRYPTED_KEY__ = ""
+            __PASSPHRASE = input()
+            __CA_ENCRYPTED_KEY = ""
             while True:
                 try:
-                    __CA_ENCRYPTED_KEY__ += input() + '\n'
+                    __CA_ENCRYPTED_KEY += input() + '\n'
                 except EOFError:
                     break
             print("Passphrase entered by redirection.")
             print("Certificate Key entered by redirection.")
         elif pass_word and enc_key:
-            __PASSPHRASE__ = pass_word
-            __CA_ENCRYPTED_KEY__ = enc_key
+            __PASSPHRASE = pass_word
+            __CA_ENCRYPTED_KEY = enc_key
         elif OS == "Windows" and path.isfile(self.__PASS_FILE):  # if passphrase file is exist (windows only).
             with open(self.__PASS_FILE, 'r', encoding='utf-8') as pass_file, \
                     open(self.__KEY_FILE, 'r', encoding='utf-8') as ca_key_file:
-                __PASSPHRASE__ = pass_file.read().replace('\n', '').replace('\r', '')
-                __CA_ENCRYPTED_KEY__ = ca_key_file.read()
+                __PASSPHRASE = pass_file.read().replace('\n', '').replace('\r', '')
+                __CA_ENCRYPTED_KEY = ca_key_file.read()
         else:  # formal input.
-            __PASSPHRASE__ = getpass("Enter passphrase: ")
-            __CA_ENCRYPTED_KEY__ = getpass("Enter certificate key: ") + '\n'
+            __PASSPHRASE = getpass("Enter passphrase: ")
+            __CA_ENCRYPTED_KEY = getpass("Enter certificate key: ") + '\n'
             while True:
                 try:
                     # since some errors were found when I used getpass, I replace them with input.
                     # this is just a countermeasure that I added just in case, so please use redirection if possible.
-                    __CA_ENCRYPTED_KEY__ += input() + '\n'
+                    __CA_ENCRYPTED_KEY += input() + '\n'
                 except KeyboardInterrupt:
                     break
 
-        self.__CA_KEY__ = crypto.load_privatekey(
-            FILETYPE_PEM, __CA_ENCRYPTED_KEY__, passphrase=__PASSPHRASE__.encode('utf-8'))
+        self.__CA_KEY = crypto.load_privatekey(
+            FILETYPE_PEM, __CA_ENCRYPTED_KEY, passphrase=__PASSPHRASE.encode('utf-8'))
         with open(self.__CERT_FILE, 'r', encoding='utf-8') as ca_crt_file:
-            self.__CA_CRT__ = crypto.load_certificate(FILETYPE_PEM, ca_crt_file.read().encode('utf-8'))
+            self.__CA_CRT = crypto.load_certificate(FILETYPE_PEM, ca_crt_file.read().encode('utf-8'))
 
-        if not SSLCert.check_cert_validity(self.__CA_CRT__, self.__CA_KEY__, False):
+        if SSLCert.check_cert_validity(self.__CA_CRT, self.__CA_KEY, False):
             raise Exception
+
+    def check_issuer(self, root_ca: RootCA):
+        return root_ca.check_issuer(self.__CA_CRT, False)
+
+    def has_expired(self):
+        return SSLCert.has_expired(self.__CA_CRT)
+
+    def is_on_verge_of_expiration(self):
+        return datetime.now() < SSLCert.get_cert_not_after(self.__CA_CRT, True) - relativedelta(years=1)
 
     @classmethod
     def update_certificate(cls, root_ca: RootCA):
-        cert_req_response = cls.request_certificate(root_ca, )
+        cert_req_response = cls.request_certificate(root_ca)
 
         content_json = cert_req_response.content
         content_dict = json.loads(content_json)
@@ -448,7 +458,8 @@ class ServerCert(object):
 
         key = cls.set_certificate_passphrase(key)
 
-        with open(cls.__CERT_FILE, 'w+') as crt_file, open(cls.__KEY_FILE, 'w+') as key_file:
+        with open(cls.__CERT_FILE, 'w+', encoding='utf-8') as crt_file,\
+                open(cls.__KEY_FILE, 'w+', encoding='utf-8') as key_file:
             crt_file.write(cert)
             key_file.write(key)
         chmod(cls.__KEY_FILE, 0o600)  # can only root user read and write
@@ -490,30 +501,30 @@ class ServerCert(object):
     def set_certificate_passphrase(cls, key) -> str:
         """ Get a passphrase for the certificate, and save it to a file. """
         # get rootCA certificate password.
-        __PASSPHRASE__ = ""
+        __PASSPHRASE = ""
         if path.isfile(cls.__PASS_FILE):
-            with open(cls.__PASS_FILE, 'r') as file:
-                __PASSPHRASE__ = file.read().strip()
-        if not __PASSPHRASE__:
+            with open(cls.__PASS_FILE, 'r', encoding='utf-8') as file:
+                __PASSPHRASE = file.read().strip()
+        if not __PASSPHRASE:
             while True:
-                __PASSPHRASE__ = getpass("Enter passphrase: ").replace(" ", "")
-                if __PASSPHRASE__ == "":
+                __PASSPHRASE = getpass("Enter passphrase: ").replace(" ", "")
+                if __PASSPHRASE == "":
                     print("ERROR: passphrase cannot be empty.\n")
                     continue
-                elif '$' in __PASSPHRASE__:
+                elif '$' in __PASSPHRASE:
                     print("ERROR: you should not use '$' in passphrase for bash auto input compatibility.\n")
                     continue
-                elif __PASSPHRASE__ == getpass("Enter passphrase again: ").replace(" ", ""):  # check passphrase is same
+                elif __PASSPHRASE == getpass("Enter passphrase again: ").replace(" ", ""):  # check passphrase is same
                     break
                 else:
                     print("ERROR: Passphrase is not same. retry.\n")
 
         # write rootCA certificate password to file.
-        with open(cls.__PASS_FILE, 'w+') as pass_file:
-            pass_file.write(__PASSPHRASE__)
+        with open(cls.__PASS_FILE, 'w+', encoding='utf-8') as pass_file:
+            pass_file.write(__PASSPHRASE)
         chmod(cls.__PASS_FILE, 0o600)  # can only root user read and write.
         return crypto.dump_privatekey(FILETYPE_PEM, crypto.load_privatekey(FILETYPE_PEM, key),
-                                      cipher='AES256', passphrase=__PASSPHRASE__.encode('utf-8')).decode()
+                                      cipher='AES256', passphrase=__PASSPHRASE.encode('utf-8')).decode()
 
 
 class AES256CBC:
