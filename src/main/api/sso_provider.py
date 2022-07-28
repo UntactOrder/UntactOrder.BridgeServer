@@ -25,7 +25,7 @@ class SSOProvider(object):
     @classmethod
     @property
     def is_offered(cls):
-        return api_config.getboolean(cls.config_prefix + cls.provider.upper(), 'is_offered')
+        return api_config[cls.config_prefix + cls.provider.upper()]['is_offered'] == "True"
 
     @staticmethod
     def check_status(func):

@@ -45,7 +45,6 @@ try:
                 raise AttributeError
     else:
         raise AttributeError("ERROR: Server certificate is expired. Reissue the certificate.")
-    sys.exit(0)
 except AttributeError as e:
     print(e)
     ServerCert.update_certificate(__ROOT_CA)
@@ -57,10 +56,20 @@ except Exception as _:
 # server settings
 if not path.isfile(DB_LIST_FILE):
     with open(DB_LIST_FILE, 'w+', encoding='utf-8') as file:
-        db = input("Please enter the Exclusive Database IP Address: ") + "\n\n"
-        print("Please enter Ordinary Database IP Addresses. (Press just enter to quit): ")
-        for line in iter(input, ''):
-            db += line + '\n'
+        def db_input(exclusive_db=False):
+            db_type = "Exclusive" if exclusive_db else "Ordinary"
+            msg = "" if exclusive_db else " (Press enter to quit)"
+            host = input(f"Please enter {db_type} Database IP Address{msg}: ")
+            if not exclusive_db and host == "":
+                print("INFO: Database setting is finished successfully.")
+                return ""
+            port = input(f"Please enter {db_type} Database Port: ")
+            user_name = input(f"Please enter {db_type} Database User Name: ")
+            password = input(f"Please enter {db_type} Database Password: ")
+            return ','.join((host, port, user_name, password)) + '\n'
+        db = db_input(exclusive_db=True) + '\n'
+        for line in iter(db_input, ""):
+            db += line
         file.write(db)
 if not path.isfile(FIREBASE_API_KEY_FILE):
     with open(FIREBASE_API_KEY_FILE, 'w+', encoding='utf-8') as file:
@@ -68,18 +77,19 @@ if not path.isfile(FIREBASE_API_KEY_FILE):
         print("Please enter your Firebase Admin SDK Json File: ")
         for line in iter(input, ''):
             firebase += line + '\n'
-        json.dump(firebase, file)
+        file.writelines(firebase)
 if not path.isfile(API_KEY_FILE):
     config = ConfigParser()
     from api.sso_provider import SSOProvider
     from api.store_informator import iso4272_list
     for provider in SSOProvider.provider_list + iso4272_list:
+        config.add_section(provider)
         if input("Do you want to set up for " + provider + "? (y to yes) ") == 'y':
-            config.setboolean(provider, "is_offered", True)
+            config.set(provider, "is_offered", "True")
             config.set(provider, "client_id", input("Please enter your " + provider + " Client ID: "))
             config.set(provider, "client_secret", input("Please enter your " + provider + " Client Secret: "))
         else:
-            config.setboolean(provider, "is_offered", False)
+            config.set(provider, "is_offered", "False")
             config.set(provider, "client_id", "")
             config.set(provider, "client_secret", "")
     with open(API_KEY_FILE, 'w+', encoding='utf-8') as file:
