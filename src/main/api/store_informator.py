@@ -16,12 +16,20 @@ iso4272_list = [_CONF_PREFIX + "KRW"]  # Supported Currency code list
 
 
 def __check_status(iso4217):
-    is_offered = api_config.getboolean(_CONF_PREFIX + iso4217.upper(), 'is_offered')
-    __client_id__ = api_config[_CONF_PREFIX + iso4217.upper()]['client_id']
-    __client_secret__ = api_config[_CONF_PREFIX + iso4217.upper()]['client_secret']
-
     if iso4217 not in iso4272_list:
         NotImplementedError(f"API is not initialized for Currency Code {iso4217}.")
+
+    @property
+    def is_offered():
+        return api_config[_CONF_PREFIX + iso4217.upper()]['is_offered'] == "True"
+
+    @property
+    def __client_id__():
+        return api_config[_CONF_PREFIX + iso4217.upper()]['client_id']
+
+    @property
+    def __client_secret__():
+        return api_config[_CONF_PREFIX + iso4217.upper()]['client_secret']
 
     def inner(func):
         if not is_offered:
