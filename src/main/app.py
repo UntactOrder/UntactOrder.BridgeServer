@@ -33,7 +33,7 @@ SERVICE_UNAVAILABLE = 503
 
 # < Load Server Resources -------------------------------------------------------------------------------------------->
 # load db list
-with open(DB_LIST_FILE, 'r') as db_list_file:
+with open(DB_LIST_FILE, 'r', encoding='utf-8') as db_list_file:
     from api.database_helper import DatabaseConnection
     db_list = [line.split(',') for line in db_list_file.read().splitlines() if line]
     DatabaseConnection.load_db_server(tuple(db_list[0]), db_list[1:])
