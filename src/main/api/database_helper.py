@@ -188,7 +188,23 @@ class DatabaseConnection(object):
         :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
         """
         # TODO: fix this
-        return 0.0
+
+        sql = f"{SEL} table_schema 'Database', ROUND(SUM(data_length+index_length) / 1024 / 1024, 1) 'MB' " \
+              f"{FRM} information_schema.TABLES " \
+              f"GROUP BY 1;"
+
+        cur = self.__user_database.cursor()
+        cur.execute(sql)
+        query_result = cur.fetchall()
+        cur.close()
+
+        target_databases = ["userDatabase", "storeDatabase", "orderHistoryDatabase"]
+        sum_of_target_usage = 0
+        for database in query_result:
+            if database['Database'] in target_databases:
+                sum_of_target_usage += database['MB']
+
+        return sum_of_target_usage
 
     @check_db_connection
     def search_table_by_name_format(self, db, table_format) -> tuple | None:
@@ -251,7 +267,7 @@ class DatabaseConnection(object):
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={_V_(val)}" for col, val in kwargs.items()])
             else:
-                sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
+                sql = f"{DEL} {FRM} {table}" if kwargs else f"{TRN_TB} {table}"
             if target_val:
                 sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
         elif query in (TRN_TB, DRP_TB):
@@ -436,7 +452,14 @@ class DatabaseConnection(object):
         """
         # TODO: acquire fcm tokens from user/store database.
         # TODO: do commit.
-        return "", ""
+
+        if pos_number is None:
+            table = f"{user_id}-fcmToken"
+            return tuple(token['token'] for token in self.__read_from_user_db(table, target='token'))
+        else:
+            table = f"{user_id}-{pos_number}-fcmToken"
+            return tuple(token['token'] for token in self.__read_from_store_db(table, target='token'))
+
 
     @check_db_connection
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> int:
@@ -457,12 +480,41 @@ class DatabaseConnection(object):
           So, in the situation of <pos_number is not None and flush is true>,
           find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
         """
+        if pos_number is None:
+            table = f"{user_id}-fcmToken"
+            allowed_days = 60  # Two months
+        else:
+            table = f"{user_id}-{pos_number}-fcmToken"
+            allowed_days = 2  # Two days
+        tokens = self.__read_from_user_db(table, target=['token', 'timeStamp'])
+        flushed_tokens = list()
         if flush:
             # TODO: flush all expired tokens.
-            pass
-        # TODO: check token length.
+            for token_info in tokens:
+                time_stamp = token_info['timeStamp']
+                token_value = token_info['token']
+                date_diff = now() - datetime.strptime(time_stamp, '%Y-%m-%d')
+                if date_diff.days > allowed_days:
+                    flushed_tokens.append(token_value)
+                    if pos_number is None:
+                        self.__write_to_user_db(DEL, table=table, column_condition='token', token=token_value)
+                    else:
+                        self.__write_to_store_db(DEL, table=table, column_condition='token', token=token_value)
+
+        valid_tokens = [token_info['token'] for token_info in tokens]
+        # Because valid_tokens has all tokens in flushed_tokens
+        if token in valid_tokens and token not in flushed_tokens:
+            return True
+
+        # TODO: check token length. ???
+
         # TODO: put new token.
-        self.__user_database.commit()
+        if pos_number is None:
+            result = self.__write_to_user_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
+            self.__user_database.commit()
+        else:
+            result = self.__write_to_store_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
+            self.__store_database.commit()
         return result
 
     @check_db_connection
@@ -474,7 +526,7 @@ class DatabaseConnection(object):
         :return: order history
         """
         table = user_id + '-' + 'orderHis'
-        return self.__read_from_user_db(table, column_condition='id', id=start_index, opr=opr)
+        return self.__read_from_user_db(table, column_condition='id', id=start_index, operator=opr)
 
     @check_db_connection
     def acquire_order_history(self, pointer: str, date=None) -> tuple | tuple[tuple, ...] | None:
@@ -685,10 +737,14 @@ class DatabaseConnection(object):
         """
         table = f"{user_id}-{pos_number}-items"
         # TODO: implement this method
+        if new_list:
+            for new_item in new_list:
+                name, price, item_type, photo_url, description, ingredient, hashtag, pinned, available = new_item
+                # 이 변수들의 제약사항 질문, 그리고 이 변수들이 넘어오는 list에 전부 들어가 있는지 아니면 optional인 변수들은 안 들어갈 수 있는지 질문.
         # do insert
-        result = self.__write_to_store_db(UPD, table, )
+        result = self.__write_to_store_db(INS, table, )
         # do update
-        self.__write_to_store_db(UPD, table, )
+        result = self.__write_to_store_db(UPD, table, )
         self.__store_database.commit()
         return result
 
@@ -745,7 +801,7 @@ class DatabaseConnection(object):
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-tableAlias")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-fcmToken")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-orderToken ")
-        self.__user_database.commit()
+        self.__store_database.commit()
         return result
 
 
