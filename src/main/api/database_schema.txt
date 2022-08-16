@@ -36,7 +36,7 @@ class DatabaseConnection(object):
             kakao_unique_id-orderHis {  # orderHistoryTable
                 id : BIGINT PRIMARY KEY autoincrement | index  # index check required
                 businessName : VARCHAR(100) | business(store) name
-                totalPrice : INT | total price
+                totalPrice : BIGINT | total price
                 dbIpAddress : VARCHAR(100) | store database ip address
                 historyStoragePointer : VARCHAR(MARIADB_OBJ_NAME_LENGTH_LIMIT)
                                         | ISO4217-business_regi_number-pos_number-table_number-20220101_120000000000
@@ -78,7 +78,7 @@ class DatabaseConnection(object):
             kakao_unique_id-pos_number-items {  # storeItemListTable
                 id : INT PRIMARY KEY autoincrement | index
                 name : VARCHAR(300) | item name  # required
-                price : INT | item price  # required
+                price : BIGINT | item price  # required
                 type : VARCHAR(100) | item type  # required
                 photoUrl : VARCHAR(MARIADB_VARCHAR_MAX) | item photo url  # optional
                 description : VARCHAR(MARIADB_VARCHAR_MAX) | item description  # optional
@@ -124,7 +124,7 @@ class DatabaseConnection(object):
                 paymentMethod : TINYINT | 0(default)=etc, 1=cash, 2=card, 3=kakao_pay, 4=naver_pay,
                                           5=payco, 6=zero_pay ...
                 itemName : VARCHAR(300) | item name  # be careful of the size
-                itemPrice : INT | item price
+                itemPrice : BIGINT | item price
                 itemQuantity : INT | item quantity
             }  # total price can be calculated by sum_by_rows(menuPrice*menuQuantity)
         }"""

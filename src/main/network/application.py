@@ -182,20 +182,23 @@ def add_order_history(firebase_id_token: str, pos_number: int, order_history: di
     if store_item_list is None:
         raise RuntimeError("The store item list is empty.")
     store_item_list = {item[0]: item[1] for item in store_item_list}
-    total_price = 0
+    total_price = 0  # total price - integer
+
     def calc_price(item_index: int, item_price: int, item_quantity: int):
         nonlocal total_price
         total_price += item_price * item_quantity
         return store_item_list[item_index], item_price, item_quantity
-    maked_up = [[customer_fuid[tk], his[0], his[1], *calc_price(his[2], his[3], his[4])]
-                for tk, his in order_history.items()]
-    result = store.set_new_order_history(list(customer_email.values()), total_price, table_number, maked_up)
-    if result == len(maked_up):
+
+    make_up = [[customer_fuid[tk], his[0], his[1], *calc_price(his[2], his[3], his[4])]
+               for tk, his in order_history.items()]
+    total_price = "{:g}".format(total_price / Store.CURRENCY_DECIMAL_SHIFT_LEVEL)
+    result = store.set_new_order_history(list(customer_email.values()), total_price, table_number, make_up)
+    if result == len(make_up):
         raise RuntimeError("Some order history datas are not added. Please check the history list.")
 
 
 def get_order_history(firebase_id_token: str, query_type: str, pos_number: int = None,
-                      indx = None, table_number: int = None) -> tuple[tuple]:
+                      indx=None, table_number: int = None) -> tuple[tuple]:
     """ Get the order history. """
     if pos_number is None:
         user = User.get_user_by_firebase_id_token(firebase_id_token)

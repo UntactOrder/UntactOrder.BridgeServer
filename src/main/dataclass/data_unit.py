@@ -221,7 +221,7 @@ class User(object):
             raise RuntimeError("Database error: No such order history in order history database.")
         return (business_name, total_price, result), history
 
-    def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
+    def set_new_order_history(self, business_name: str, total_price: str, db_ip: str, pointer: str) -> int:
         """ This method will be called by Store object. """
         return self.db_connection.register_user_order_history(self.user_id, business_name, total_price, db_ip, pointer)
 
@@ -238,6 +238,8 @@ class Store(object):
     """ Cachable Store Data Unit object.
         with this class, you can get and set user data from user store or GitHub.
     """
+
+    CURRENCY_DECIMAL_SHIFT_LEVEL = DatabaseConnection.CURRENCY_DECIMAL_SHIFT_LEVEL
 
     @staticmethod
     def get_store_list(firebase_id_token: str) -> list:
@@ -460,7 +462,7 @@ class Store(object):
         """ Get customer info by order token. """
         return self.db_connection.acquire_user_by_order_token(self.user_id, self.pos_number, order_token)
 
-    def set_new_order_history(self, customer_emails: list, total_price: int,
+    def set_new_order_history(self, customer_emails: list, total_price: str,
                               table_number: int, order_history: list[list]) -> int:
         """ Set new order history. """
         table = f"{self.iso4217}-{self.business_registration_number}" \

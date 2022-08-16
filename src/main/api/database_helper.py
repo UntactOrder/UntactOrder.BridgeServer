@@ -65,13 +65,19 @@ class DatabaseConnection(object):
         from settings import RootCA
         __ROOT_CA = RootCA.cert_file
 
+    # MariaDB Data Type Max Length
+    #
     # Identifier Names
     # https://mariadb.com/kb/en/identifier-names/
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
+    #
+    # Data Types
     MARIADB_VARCHAR_MAX = 65535  # byte
-    MARIADB_INT_MAX = 2147483647  # byte
-    MARIADB_INT_MIN = -2147483648  # byte
+    MARIADB_INT_MAX = 2147483647
+    MARIADB_INT_MIN = -2147483648
+    MARIADB_BIGINT_MAX = 9223372036854775807
+    MARIADB_BIGINT_MIN = -9223372036854775808
 
     # DB Constants
     #
@@ -85,6 +91,7 @@ class DatabaseConnection(object):
             insert, update, delete = range(3)
     #
     # storeDatabase
+    CURRENCY_DECIMAL_SHIFT_LEVEL = 10 ** 5  # shift 5 level to all item price
 
     #
     # orderHistoryDatabase
@@ -97,9 +104,10 @@ class DatabaseConnection(object):
             min_, max_ = 0, 12
             (etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,
              phone_pay, wechat_pay, ali_pay, jtnet_pay) = range(min_, max_ + 1)
-
+    #
     # exclusive database
     exclusive = None
+    # -----------------------------------------------------------------------------
 
     @classmethod
     def load_db_server(cls, exclusive_db: tuple, db_list: list):
@@ -308,7 +316,7 @@ class DatabaseConnection(object):
         elif 'orderHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"id BIGINT AUTO_INCREMENT  {NNUL}, businessName VARCHAR(100) {NNUL}, " \
-                  f"totalPrice INT {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
+                  f"totalPrice VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
                   f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
@@ -333,7 +341,7 @@ class DatabaseConnection(object):
                   f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
         elif 'items' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(300) {NNUL}, price INT {NNUL}, " \
+                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(300) {NNUL}, price BIGINT {NNUL}, " \
                   f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
@@ -359,7 +367,7 @@ class DatabaseConnection(object):
               f"id INT AUTO_INCREMENT {PRIM} {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
               f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
               f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
-              f"itemName VARCHAR(300) {NNUL}, itemPrice INT {NNUL}, itemQuantity INT {NNUL});"
+              f"itemName VARCHAR(300) {NNUL}, itemPrice BIGINT {NNUL}, itemQuantity INT {NNUL});"
         return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
     @check_db_connection
@@ -488,7 +496,7 @@ class DatabaseConnection(object):
 
     @check_db_connection
     def register_user_order_history(self, user_id: str,
-                                    business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
+                                    business_name: str, total_price: str, db_ip: str, pointer: str) -> int:
         """ Register user order history to user database.
         :param user_id: user id
         :param business_name: business name
@@ -499,7 +507,7 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'orderHis'
         if len(business_name) > 100:
             raise ValueError("Length of business name is too long.")
-        if total_price > self.MARIADB_INT_MAX or total_price < self.MARIADB_INT_MIN:
+        if len(pointer) > self.MARIADB_VARCHAR_MAX:
             raise ValueError("Total price is out of range.")
         if len(db_ip) > 100:
             raise ValueError("Length of database ip is too long.")
@@ -529,7 +537,7 @@ class DatabaseConnection(object):
             raise ValueError("Payment method is out of range.")
         item_names = list(next(zipper))  # we don't need to check length of item name because it is from our database.
         item_prices = list(next(zipper))
-        if [True for price in item_prices if price > self.MARIADB_INT_MAX or price < self.MARIADB_INT_MIN]:
+        if [True for price in item_prices if price > self.MARIADB_BIGINT_MAX or price < self.MARIADB_BIGINT_MIN]:
             raise ValueError("MenuPrice is out of range.")
         item_quantities = list(next(zipper))
         if [True for quantity in item_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
