@@ -319,7 +319,7 @@ class Store(object):
                    check the DB server's table change logs and take legal action.
         """
         # check pos number range
-        if not 0 <= pos_number < 999:
+        if not 0 <= pos_number < 1000:
             raise ValueError("Pos number is out of range.")
 
         # get user by firebase id token
