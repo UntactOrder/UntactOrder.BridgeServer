@@ -65,13 +65,25 @@ class DatabaseConnection(object):
         from settings import RootCA
         __ROOT_CA = RootCA.cert_file
 
+    # MariaDB Data Type Max Length
+    #
     # Identifier Names
     # https://mariadb.com/kb/en/identifier-names/
     MARIADB_OBJ_NAME_LENGTH_LIMIT = 64  # byte
     MARIADB_ALIAS_LENGTH_LIMIT = 256  # byte
+    #
+    # Data Types
     MARIADB_VARCHAR_MAX = 65535  # byte
-    MARIADB_INT_MAX = 2147483647  # byte
-    MARIADB_INT_MIN = -2147483648  # byte
+    MARIADB_INT_MAX = 2147483647
+    MARIADB_INT_MIN = -2147483648
+    MARIADB_BIGINT_MAX = 9223372036854775807
+    MARIADB_BIGINT_MIN = -9223372036854775808
+    #
+    # Firebase
+    #
+    # FCM Token Length
+    # https://stackoverflow.com/questions/39959417/what-is-the-maximum-length-of-an-fcm-registration-id-token
+    FIREBASE_CLOUD_MESSAGING_TOKEN_LENGTH_LIMIT = 4096
 
     # DB Constants
     #
@@ -85,6 +97,7 @@ class DatabaseConnection(object):
             insert, update, delete = range(3)
     #
     # storeDatabase
+    CURRENCY_DECIMAL_SHIFT_LEVEL = 10 ** 5  # shift 5 level to all item price
 
     #
     # orderHistoryDatabase
@@ -97,9 +110,10 @@ class DatabaseConnection(object):
             min_, max_ = 0, 12
             (etc, cash, card, kakao_pay, naver_pay, payco, zero_pay, paypal, paytm,
              phone_pay, wechat_pay, ali_pay, jtnet_pay) = range(min_, max_ + 1)
-
+    #
     # exclusive database
     exclusive = None
+    # -----------------------------------------------------------------------------
 
     @classmethod
     def load_db_server(cls, exclusive_db: tuple, db_list: list):
@@ -179,8 +193,24 @@ class DatabaseConnection(object):
         """ Calculate disk usage in MB.
         :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
         """
-        # TODO: fix this
-        return 0.0
+        # TODO: check if this work correctly
+
+        sql = f"{SEL} table_schema 'Database', ROUND(SUM(data_length+index_length) / 1024 / 1024, 1) 'MB' " \
+              f"{FRM} information_schema.TABLES " \
+              f"GROUP BY 1;"
+
+        cur = self.__user_database.cursor()
+        cur.execute(sql)
+        query_result = cur.fetchall()
+        cur.close()
+
+        target_databases = ["userDatabase", "storeDatabase", "orderHistoryDatabase"]
+        sum_of_target_usage = 0.0
+        for database in query_result:
+            if database[0] in target_databases:  # 'Database' => database[0]
+                sum_of_target_usage += database[1]  # 'MB' => database[1]
+
+        return sum_of_target_usage
 
     @check_db_connection
     def search_table_by_name_format(self, db, table_format) -> tuple | None:
@@ -243,7 +273,7 @@ class DatabaseConnection(object):
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={_V_(val)}" for col, val in kwargs.items()])
             else:
-                sql = f"{DEL} {table}" if kwargs else f"{TRN_TB} {table}"
+                sql = f"{DEL} {FRM} {table}" if target_val else f"{TRN_TB} {table}"
             if target_val:
                 sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
         elif query in (TRN_TB, DRP_TB):
@@ -307,8 +337,8 @@ class DatabaseConnection(object):
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
         elif 'orderHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id BIGINT AUTO_INCREMENT  {NNUL}, businessName VARCHAR(100) {NNUL}, " \
-                  f"totalPrice INT {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
+                  f"id BIGINT AUTO_INCREMENT {NNUL}, businessName VARCHAR(100) {NNUL}, " \
+                  f"totalPrice VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
                   f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
         else:
             raise ValueError(f"{table} is not supported.")
@@ -333,12 +363,12 @@ class DatabaseConnection(object):
                   f"businessCategory VARCHAR(1000) {NNUL} {DFT} '', businessSubCategory VARCHAR(2000) {NNUL} {DFT} '');"
         elif 'items' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(300) {NNUL}, price INT {NNUL}, " \
+                  f"id INT AUTO_INCREMENT {PRIM} {NNUL}, name VARCHAR(300) {NNUL}, price BIGINT {NNUL}, " \
                   f"type VARCHAR(100) {NNUL}, photoUrl VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"hashtag VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"pinned BOOLEAN {NNUL} {DFT} 0, available  BOOLEAN {NNUL} {DFT} 1);"
+                  f"pinned BOOLEAN {NNUL} {DFT} 0, available BOOLEAN {NNUL} {DFT} 1);"
         elif 'tableAlias' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"id INT AUTO_INCREMENT {NNUL}, tableString VARCHAR(10) {PRIM} {NNUL});"
@@ -359,7 +389,7 @@ class DatabaseConnection(object):
               f"id INT AUTO_INCREMENT {PRIM} {NNUL}, firebaseUid VARCHAR(128) {NNUL}," \
               f"orderStatus TINYINT {NNUL} {DFT} {self.HIS.STAT.ordered}, " \
               f"paymentMethod TINYINT {NNUL} {DFT} {self.HIS.PAY.etc}, " \
-              f"itemName VARCHAR(300) {NNUL}, itemPrice INT {NNUL}, itemQuantity INT {NNUL});"
+              f"itemName VARCHAR(300) {NNUL}, itemPrice BIGINT {NNUL}, itemQuantity INT {NNUL});"
         return self.__write(self.__order_history_database, sql, query, table, column_condition, **kwargs)
 
     @check_db_connection
@@ -390,7 +420,7 @@ class DatabaseConnection(object):
             args['AESIV'] = (aes_iv, None, 50)
         for key, (val, min_, max_) in args.items():
             if val is not None:
-                if val:
+                if val != '':  # if get empty string, then update value to default value.
                     if min_ is None:
                         if len(val) > max_:
                             raise ValueError(f"Length of {key} is too long.")
@@ -398,7 +428,7 @@ class DatabaseConnection(object):
                         if val < min_ or val > max_:
                             raise ValueError(f"{key} must be between {min_} and {max_}.")
                     kwargs[key] = val
-                    upd_his.append(f"{key}={_V_(val)}")
+                    upd_his.append(f"{key}=" + (f"{val}" if isinstance(val, int) else f"'{val}'"))
                 else:
                     kwargs[key] = '' if min_ is None else -1
                     del_his.append(key)
@@ -426,9 +456,9 @@ class DatabaseConnection(object):
         :param user_id: user id
         :param pos_number: pos number or None (if None, acquire from user db / if not none, from store db)
         """
-        # TODO: acquire fcm tokens from user/store database.
-        # TODO: do commit.
-        return "", ""
+        table = f"{user_id}-{pos_number}-fcmToken" if pos_number else f"{user_id}-fcmToken"
+        return tuple(token[0] for token in
+                     (self.__read_from_store_db if pos_number else self.__read_from_user_db)(table, target='token'))
 
     @check_db_connection
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> int:
@@ -449,12 +479,42 @@ class DatabaseConnection(object):
           So, in the situation of <pos_number is not None and flush is true>,
           find expired(which is registered !!two days!! ago) tokens that registered in store db and delete them.
         """
+        if pos_number is None:
+            table = f"{user_id}-fcmToken"
+            allowed_days = 60  # Two months
+            write_to_db = self.__write_to_user_db
+            tokens = self.__read_from_user_db(table, target=['timeStamp', 'token'])
+        else:
+            table = f"{user_id}-{pos_number}-fcmToken"
+            allowed_days = 2  # Two days
+            write_to_db = self.__write_to_store_db
+            tokens = self.__read_from_store_db(table, target=['timeStamp', 'token'])
+
+        # flush all expired tokens.
         if flush:
-            # TODO: flush all expired tokens.
-            pass
-        # TODO: check token length.
-        # TODO: put new token.
-        self.__user_database.commit()
+            flushed_token_values = []
+            append_to_flushed_token_values = flushed_token_values.append
+            for token_info in tokens:
+                time_stamp, token_value = token_info  # 'timeStamp', 'token'
+                date_diff = now() - datetime.strptime(time_stamp, '%Y-%m-%d')
+                if date_diff.days > allowed_days:
+                    append_to_flushed_token_values(token_value)
+                    write_to_db(DEL, table=table, column_condition='token', token=token_value)
+            valid_tokens = [token_info[1] for token_info in tokens if token_info[1] not in flushed_token_values]
+        else:
+            valid_tokens = [token_info[1] for token_info in tokens]
+
+        # check if token is already in database.
+        if token in valid_tokens:
+            return 1
+
+        # check token length.
+        if len(token) > self.FIREBASE_CLOUD_MESSAGING_TOKEN_LENGTH_LIMIT:
+            raise ValueError("FCM Token is too long.")
+
+        # put new token to user/store database.
+        result = write_to_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
+        self.__store_database.commit() if pos_number else self.__user_database.commit()
         return result
 
     @check_db_connection
@@ -466,7 +526,7 @@ class DatabaseConnection(object):
         :return: order history
         """
         table = user_id + '-' + 'orderHis'
-        return self.__read_from_user_db(table, column_condition='id', id=start_index, opr=opr)
+        return self.__read_from_user_db(table, column_condition='id', id=start_index, operator=opr)
 
     @check_db_connection
     def acquire_order_history(self, pointer: str, date=None) -> tuple | tuple[tuple, ...] | None:
@@ -488,7 +548,7 @@ class DatabaseConnection(object):
 
     @check_db_connection
     def register_user_order_history(self, user_id: str,
-                                    business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
+                                    business_name: str, total_price: str, db_ip: str, pointer: str) -> int:
         """ Register user order history to user database.
         :param user_id: user id
         :param business_name: business name
@@ -499,7 +559,7 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'orderHis'
         if len(business_name) > 100:
             raise ValueError("Length of business name is too long.")
-        if total_price > self.MARIADB_INT_MAX or total_price < self.MARIADB_INT_MIN:
+        if len(total_price) > self.MARIADB_VARCHAR_MAX:
             raise ValueError("Total price is out of range.")
         if len(db_ip) > 100:
             raise ValueError("Length of database ip is too long.")
@@ -529,7 +589,7 @@ class DatabaseConnection(object):
             raise ValueError("Payment method is out of range.")
         item_names = list(next(zipper))  # we don't need to check length of item name because it is from our database.
         item_prices = list(next(zipper))
-        if [True for price in item_prices if price > self.MARIADB_INT_MAX or price < self.MARIADB_INT_MIN]:
+        if [True for price in item_prices if price > self.MARIADB_BIGINT_MAX or price < self.MARIADB_BIGINT_MIN]:
             raise ValueError("MenuPrice is out of range.")
         item_quantities = list(next(zipper))
         if [True for quantity in item_quantities if quantity > self.MARIADB_INT_MAX or quantity < self.MARIADB_INT_MIN]:
@@ -647,7 +707,7 @@ class DatabaseConnection(object):
               'businessCategory': (business_category, n, 1000), 'businessSubCategory': (business_sub_category, n, 2000)}
         for key, (val, min_, max_) in ag.items():
             if val is not None:
-                if val:
+                if val != '':  # if get empty string, then update value to default value.
                     if min_ is None:
                         if len(val) > max_:
                             raise ValueError(f"Length of {key} is too long.")
@@ -670,17 +730,39 @@ class DatabaseConnection(object):
 
     @check_db_connection
     def register_store_item_list(self, user_id: str, pos_number: int,
-                                 new_list: list[list] = None, update_list: list[list] = None) -> int:
+                                 new_list: list[dict] = None, update_list: list[dict] = None) -> int:
         """ Register store item list to user database.
-        :param new_list: list of new items. [[name, price, type, photoUrl, ...], ...]
-        :param update_list: list of items need to be updated. [[name, price, type, photoUrl, ...], ...]
+        :param new_list: list of new items. [{name, price, type, photoUrl, ...}, ...]
+        :param update_list: list of items need to be updated. [{name, price, type, photoUrl, ...}, ...]
         """
         table = f"{user_id}-{pos_number}-items"
-        # TODO: implement this method
-        # do insert
-        result = self.__write_to_store_db(UPD, table, )
-        # do update
-        self.__write_to_store_db(UPD, table, )
+
+        new_kwargs: dict[str, str | int] = {}
+        update_kwargs: dict[str, str | int] = {}
+
+        n = None
+        ag = {'name': ('name', n, 300), 'price': ('price', self.MARIADB_BIGINT_MIN, self.MARIADB_BIGINT_MAX),
+              'type': ('type', n, 100), 'photoUrl': ('photo_url', n, self.MARIADB_VARCHAR_MAX),
+              'description': ('description', n, self.MARIADB_VARCHAR_MAX),
+              'ingredient': ('ingredient', n, self.MARIADB_VARCHAR_MAX),
+              'hashtag': ('hashtag', n, self.MARIADB_VARCHAR_MAX),
+              'pinned': ('pinned', False, True), 'available': ('available', False, True)}
+        for kwargs, raw in ((new_kwargs, new_list), (update_kwargs, update_list)):
+            for key, (raw_key, min_, max_) in ag.items():
+                if raw_key in raw:  # check if raw_key is in raw
+                    val = raw_key[raw]
+                    if min_ is None:
+                        if len(val) > max_:
+                            raise ValueError(f"Length of {key} is too long.")
+                    elif min_ is False:
+                        val = 0 if val in (0, False, '') else 1  # determined to be TRUE except for 0, False, empty str
+                    else:
+                        if val < min_ or val > max_:
+                            raise ValueError(f"{key} must be between {min_} and {max_}.")
+                    kwargs[key] = val
+
+        result = self.__write_to_store_db(INS, table, **new_kwargs)  # do insert
+        result += self.__write_to_store_db(UPD, table, **update_kwargs)  # do update
         self.__store_database.commit()
         return result
 
@@ -737,7 +819,7 @@ class DatabaseConnection(object):
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-tableAlias")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-fcmToken")
         self.__write_to_store_db(DRP_TB, user_id + f"-{pos_number}-orderToken ")
-        self.__user_database.commit()
+        self.__store_database.commit()
         return result
 
 

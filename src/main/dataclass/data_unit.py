@@ -15,6 +15,7 @@ from cachetools.func import ttl_cache
 from iso4217 import Currency
 
 from datetime import datetime
+
 now = datetime.now
 
 if __name__ == '__main__':
@@ -135,7 +136,7 @@ class User(object):
             raise e
 
         # reserve password reset - 5 minutes later
-        Timer(60*5, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
+        Timer(60 * 5, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
         # Because of this timer, we have to shut down the Nginx reverse proxy server first
         # # before the database server & backend server shutting down.
         # By this way, new login requests will not come in.
@@ -221,7 +222,7 @@ class User(object):
             raise RuntimeError("Database error: No such order history in order history database.")
         return (business_name, total_price, result), history
 
-    def set_new_order_history(self, business_name: str, total_price: int, db_ip: str, pointer: str) -> int:
+    def set_new_order_history(self, business_name: str, total_price: str, db_ip: str, pointer: str) -> int:
         """ This method will be called by Store object. """
         return self.db_connection.register_user_order_history(self.user_id, business_name, total_price, db_ip, pointer)
 
@@ -238,6 +239,8 @@ class Store(object):
     """ Cachable Store Data Unit object.
         with this class, you can get and set user data from user store or GitHub.
     """
+
+    CURRENCY_DECIMAL_SHIFT_LEVEL = DatabaseConnection.CURRENCY_DECIMAL_SHIFT_LEVEL
 
     @staticmethod
     def get_store_list(firebase_id_token: str) -> list:
@@ -257,7 +260,7 @@ class Store(object):
             return None
 
     @staticmethod
-    @ttl_cache(maxsize=1, ttl=60*60*10)  # this cache is for 10 hours
+    @ttl_cache(maxsize=1, ttl=60 * 60 * 10)  # this cache is for 10 hours
     def query_all_store_list() -> list:  # for client app's store list
         """ Get all store list from all db. """
         dbs: dict[str, DatabaseConnection] = DatabaseConnection.get_instance(None)
@@ -294,8 +297,8 @@ class Store(object):
         table_number = store.get_store_table_list(t_str)
         if table_number is None:
             raise ValueError("No such table.")
-        return table_number, \
-               store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
+        return table_number, store.db_connection.register_user_order_token(
+            store.user_id, store.pos_number, cus.email, table_number)
 
     @staticmethod
     def get_store_info(info_type: str, *args, **kwargs) -> tuple:
@@ -316,7 +319,7 @@ class Store(object):
                    check the DB server's table change logs and take legal action.
         """
         # check pos number range
-        if not 0 <= pos_number < 999:
+        if not 0 <= pos_number < 1000:
             raise ValueError("Pos number is out of range.")
 
         # get user by firebase id token
@@ -438,12 +441,12 @@ class Store(object):
     def fcm_token(self) -> tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id, self.pos_number)
 
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> int:
         """ Put new fcm token to store database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
-        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
+        return self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
     def get_order_history_by_date(self, date: str, table: int = None) -> list[list[int, tuple], ...]:
         """ Get order history by date(yyyymmdd). """
@@ -460,7 +463,7 @@ class Store(object):
         """ Get customer info by order token. """
         return self.db_connection.acquire_user_by_order_token(self.user_id, self.pos_number, order_token)
 
-    def set_new_order_history(self, customer_emails: list, total_price: int,
+    def set_new_order_history(self, customer_emails: list, total_price: str,
                               table_number: int, order_history: list[list]) -> int:
         """ Set new order history. """
         table = f"{self.iso4217}-{self.business_registration_number}" \
