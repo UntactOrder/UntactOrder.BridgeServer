@@ -78,6 +78,12 @@ class DatabaseConnection(object):
     MARIADB_INT_MIN = -2147483648
     MARIADB_BIGINT_MAX = 9223372036854775807
     MARIADB_BIGINT_MIN = -9223372036854775808
+    #
+    # Firebase
+    #
+    # FCM Token Length
+    # https://stackoverflow.com/questions/39959417/what-is-the-maximum-length-of-an-fcm-registration-id-token
+    FIREBASE_CLOUD_MESSAGING_TOKEN_LENGTH_LIMIT = 4096
 
     # DB Constants
     #
@@ -187,7 +193,7 @@ class DatabaseConnection(object):
         """ Calculate disk usage in MB.
         :reference: https://dba.stackexchange.com/questions/14337/calculating-disk-space-usage-per-mysql-db
         """
-        # TODO: fix this
+        # TODO: check if this work correctly
 
         sql = f"{SEL} table_schema 'Database', ROUND(SUM(data_length+index_length) / 1024 / 1024, 1) 'MB' " \
               f"{FRM} information_schema.TABLES " \
@@ -199,10 +205,10 @@ class DatabaseConnection(object):
         cur.close()
 
         target_databases = ["userDatabase", "storeDatabase", "orderHistoryDatabase"]
-        sum_of_target_usage = 0
+        sum_of_target_usage = 0.0
         for database in query_result:
-            if database['Database'] in target_databases:
-                sum_of_target_usage += database['MB']
+            if database[0] in target_databases:  # 'Database' => database[0]
+                sum_of_target_usage += database[1]  # 'MB' => database[1]
 
         return sum_of_target_usage
 
@@ -267,7 +273,7 @@ class DatabaseConnection(object):
             if query == UPD:
                 sql = f"{UPD} {table} {SET} " + ", ".join([f"{col}={_V_(val)}" for col, val in kwargs.items()])
             else:
-                sql = f"{DEL} {FRM} {table}" if kwargs else f"{TRN_TB} {table}"
+                sql = f"{DEL} {FRM} {table}" if target_val else f"{TRN_TB} {table}"
             if target_val:
                 sql += f" {WHR} " + " AND ".join([f"{col}{opr}{_V_(val)}" for col, val in zip(target_col, target_val)])
         elif query in (TRN_TB, DRP_TB):
@@ -450,16 +456,9 @@ class DatabaseConnection(object):
         :param user_id: user id
         :param pos_number: pos number or None (if None, acquire from user db / if not none, from store db)
         """
-        # TODO: acquire fcm tokens from user/store database.
-        # TODO: do commit.
-
-        if pos_number is None:
-            table = f"{user_id}-fcmToken"
-            return tuple(token['token'] for token in self.__read_from_user_db(table, target='token'))
-        else:
-            table = f"{user_id}-{pos_number}-fcmToken"
-            return tuple(token['token'] for token in self.__read_from_store_db(table, target='token'))
-
+        table = f"{user_id}-{pos_number}-fcmToken" if pos_number else f"{user_id}-fcmToken"
+        return tuple(token[0] for token in
+                     (self.__read_from_store_db if pos_number else self.__read_from_user_db)(table, target='token'))
 
     @check_db_connection
     def register_new_fcm_token(self, token: str, user_id: str, pos_number: int = None, flush: bool = False) -> int:
@@ -483,38 +482,39 @@ class DatabaseConnection(object):
         if pos_number is None:
             table = f"{user_id}-fcmToken"
             allowed_days = 60  # Two months
+            write_to_db = self.__write_to_user_db
+            tokens = self.__read_from_user_db(table, target=['timeStamp', 'token'])
         else:
             table = f"{user_id}-{pos_number}-fcmToken"
             allowed_days = 2  # Two days
-        tokens = self.__read_from_user_db(table, target=['token', 'timeStamp'])
-        flushed_tokens = list()
+            write_to_db = self.__write_to_store_db
+            tokens = self.__read_from_store_db(table, target=['timeStamp', 'token'])
+
+        # flush all expired tokens.
         if flush:
-            # TODO: flush all expired tokens.
+            flushed_token_values = []
+            append_to_flushed_token_values = flushed_token_values.append
             for token_info in tokens:
-                time_stamp = token_info['timeStamp']
-                token_value = token_info['token']
+                time_stamp, token_value = token_info  # 'timeStamp', 'token'
                 date_diff = now() - datetime.strptime(time_stamp, '%Y-%m-%d')
                 if date_diff.days > allowed_days:
-                    flushed_tokens.append(token_value)
-                    if pos_number is None:
-                        self.__write_to_user_db(DEL, table=table, column_condition='token', token=token_value)
-                    else:
-                        self.__write_to_store_db(DEL, table=table, column_condition='token', token=token_value)
-
-        valid_tokens = [token_info['token'] for token_info in tokens]
-        # Because valid_tokens has all tokens in flushed_tokens
-        if token in valid_tokens and token not in flushed_tokens:
-            return True
-
-        # TODO: check token length. ???
-
-        # TODO: put new token.
-        if pos_number is None:
-            result = self.__write_to_user_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
-            self.__user_database.commit()
+                    append_to_flushed_token_values(token_value)
+                    write_to_db(DEL, table=table, column_condition='token', token=token_value)
+            valid_tokens = [token_info[1] for token_info in tokens if token_info[1] not in flushed_token_values]
         else:
-            result = self.__write_to_store_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
-            self.__store_database.commit()
+            valid_tokens = [token_info[1] for token_info in tokens]
+
+        # check if token is already in database.
+        if token in valid_tokens:
+            return 1
+
+        # check token length.
+        if len(token) > self.FIREBASE_CLOUD_MESSAGING_TOKEN_LENGTH_LIMIT:
+            raise ValueError("FCM Token is too long.")
+
+        # put new token to user/store database.
+        result = write_to_db(INS, table=table, token=token, timeStamp=now().strftime('%Y-%m-%d'))
+        self.__store_database.commit() if pos_number else self.__user_database.commit()
         return result
 
     @check_db_connection
@@ -559,7 +559,7 @@ class DatabaseConnection(object):
         table = user_id + '-' + 'orderHis'
         if len(business_name) > 100:
             raise ValueError("Length of business name is too long.")
-        if len(pointer) > self.MARIADB_VARCHAR_MAX:
+        if len(total_price) > self.MARIADB_VARCHAR_MAX:
             raise ValueError("Total price is out of range.")
         if len(db_ip) > 100:
             raise ValueError("Length of database ip is too long.")
@@ -736,7 +736,7 @@ class DatabaseConnection(object):
         :param update_list: list of items need to be updated. [[name, price, type, photoUrl, ...], ...]
         """
         table = f"{user_id}-{pos_number}-items"
-        # TODO: implement this method
+
         if new_list:
             for new_item in new_list:
                 name, price, item_type, photo_url, description, ingredient, hashtag, pinned, available = new_item

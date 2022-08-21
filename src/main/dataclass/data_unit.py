@@ -15,6 +15,7 @@ from cachetools.func import ttl_cache
 from iso4217 import Currency
 
 from datetime import datetime
+
 now = datetime.now
 
 if __name__ == '__main__':
@@ -135,7 +136,7 @@ class User(object):
             raise e
 
         # reserve password reset - 5 minutes later
-        Timer(60*5, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
+        Timer(60 * 5, lambda: fcon.update_user(fuser.uid, password=gen_random_password())).start()
         # Because of this timer, we have to shut down the Nginx reverse proxy server first
         # # before the database server & backend server shutting down.
         # By this way, new login requests will not come in.
@@ -259,7 +260,7 @@ class Store(object):
             return None
 
     @staticmethod
-    @ttl_cache(maxsize=1, ttl=60*60*10)  # this cache is for 10 hours
+    @ttl_cache(maxsize=1, ttl=60 * 60 * 10)  # this cache is for 10 hours
     def query_all_store_list() -> list:  # for client app's store list
         """ Get all store list from all db. """
         dbs: dict[str, DatabaseConnection] = DatabaseConnection.get_instance(None)
@@ -296,8 +297,8 @@ class Store(object):
         table_number = store.get_store_table_list(t_str)
         if table_number is None:
             raise ValueError("No such table.")
-        return table_number, \
-               store.db_connection.register_user_order_token(store.user_id, store.pos_number, cus.email, table_number)
+        return table_number, store.db_connection.register_user_order_token(
+            store.user_id, store.pos_number, cus.email, table_number)
 
     @staticmethod
     def get_store_info(info_type: str, *args, **kwargs) -> tuple:
@@ -440,12 +441,12 @@ class Store(object):
     def fcm_token(self) -> tuple[str, ...]:
         return self.db_connection.acquire_fcm_tokens(self.user_id, self.pos_number)
 
-    def set_new_fcm_token(self, fcm_token: str, flush: bool = True):
+    def set_new_fcm_token(self, fcm_token: str, flush: bool = True) -> int:
         """ Put new fcm token to store database.
         :param fcm_token: Firebase Cloud Messaging token.
         :param flush: If true, flush the old(that have been registered for two days) token.
         """
-        self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
+        return self.db_connection.register_new_fcm_token(fcm_token, self.user_id, self.pos_number, flush)
 
     def get_order_history_by_date(self, date: str, table: int = None) -> list[list[int, tuple], ...]:
         """ Get order history by date(yyyymmdd). """
