@@ -33,7 +33,7 @@ SERVICE_UNAVAILABLE = 503
 
 # < Load Server Resources -------------------------------------------------------------------------------------------->
 # load db list
-with open(DB_LIST_FILE, 'r') as db_list_file:
+with open(DB_LIST_FILE, 'r', encoding='utf-8') as db_list_file:
     from api.database_helper import DatabaseConnection
     db_list = [line.split(',') for line in db_list_file.read().splitlines() if line]
     DatabaseConnection.load_db_server(tuple(db_list[0]), db_list[1:])
@@ -56,16 +56,22 @@ def create_app():
                 abort(SERVICE_UNAVAILABLE, description="[ServerInspectionTimeError] " + service_denial_msg)
             # run function with error handling
             else:
+                def abort_with_logging(error, *inner_args, **inner_kwargs):
+                    print(error)
+                    abort(*inner_args, **inner_kwargs)
+
                 try:
                     return func(*args, **kwargs)
                 except (ValueError | KeyError | TypeError | JsonParseError) as e:
-                    abort(BAD_REQUEST, description=f"[{type(e).__name__}] {str(e)}")
+                    abort_with_logging(e, BAD_REQUEST, description=f"[{type(e).__name__}] {str(e)}")
                 except (OSError | RuntimeError) as e:
-                    abort(INTERNAL_SERVER_ERROR, description=f"[{type(e).__name__}] {str(e)}")
+                    abort_with_logging(e, INTERNAL_SERVER_ERROR, description=f"[{type(e).__name__}] {str(e)}")
                 except UnauthorizedClientError as e:
-                    abort(UNAUTHORIZED, description=f"[{type(e).__name__}] {str(e)}")
+                    abort_with_logging(e, UNAUTHORIZED, description=f"[{type(e).__name__}] {str(e)}")
                 except ForbiddenAccessError as e:
-                    abort(FORBIDDEN, description=f"[{type(e).__name__}] {str(e)}")
+                    abort_with_logging(e, FORBIDDEN, description=f"[{type(e).__name__}] {str(e)}")
+                except Exception as e:
+                    abort_with_logging(e, INTERNAL_SERVER_ERROR, description="An unknown error occurred.")
         notice_service_denial.__name__ = func.__name__  # rename function name
         return notice_service_denial
 
@@ -77,6 +83,7 @@ def create_app():
         :return: dict when the request is valid, Response object when the request is invalid
         """
         personal_json = req.get_json()
+
         def check_keys() -> bool:  # TODO: check if get_json returns proper type of value or just returns str type
             for key, T in (required_key if required_key is not None else {}).items():
                 if key not in personal_json or not personal_json[key] or not isinstance(personal_json[key], T):
@@ -93,7 +100,7 @@ def create_app():
     @server_status_noticer
     def index():
         """ To check if the server is running """
-        return f"Hello, {request.environ.get('HTTP_X_REAL_IP', request.remote_addr)}!"
+        return f"Hello, World!"
 
     #
     # process common requests
@@ -171,9 +178,9 @@ def create_app():
                      Body = {token: firebase_id_token, something to patch......}
         """
         if info_type not in ('info', 'pos', 'item'):
-            abort(404, description="Resource not found")
+            abort(NOT_FOUND, description="Resource not found")
         parsed_json = parse_json(request)
-        result = ap.update_data_unit_info(parsed_json[0], pos_number, **parsed_json[1])
+        result = ap.update_data_unit_info(parsed_json[0], pos_number, info_type, **parsed_json[1])
         return jsonify({'status': "success" if result else "fail"})
 
     @app.post('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request
@@ -196,7 +203,7 @@ def create_app():
                                                                  pos_number: pos_number, order_token: order_token}
         """
         if info_type not in ('info', 'info_by_token', 'pos', 'item'):
-            abort(404, description="Resource not found")
+            abort(NOT_FOUND, description="Resource not found")
         parsed = \
             parse_json(request, None if info_type != 'info_by_token' else {'pos_number': int, 'order_token': str})
         if identifier is not None:

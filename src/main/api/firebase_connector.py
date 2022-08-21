@@ -221,7 +221,9 @@ class DynamicLink(object):
     """ Dynamic Link Generator """
     DYN = "https://" + DYNAMIC_LINK_DOMAIN
     DP = "https://" + DEEP_LINK_DOMAIN
-    PKG = DEEP_LINK_DOMAIN.split(".").reverse()
+    PKG = DEEP_LINK_DOMAIN.split(".")
+    PKG.reverse()
+    PKG = '.'.join(PKG)
 
     APN = PKG + ".androidclient"
     IBI = PKG + ".darwinclient"
