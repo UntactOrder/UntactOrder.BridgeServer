@@ -337,7 +337,7 @@ class DatabaseConnection(object):
                   f"timeStamp VARCHAR(30) {NNUL}, token VARCHAR(4096) {NNUL});"
         elif 'orderHis' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
-                  f"id BIGINT AUTO_INCREMENT  {NNUL}, businessName VARCHAR(100) {NNUL}, " \
+                  f"id BIGINT AUTO_INCREMENT {NNUL}, businessName VARCHAR(100) {NNUL}, " \
                   f"totalPrice VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL}, dbIpAddress VARCHAR(100) {NNUL}, " \
                   f"historyStoragePointer VARCHAR({self.MARIADB_OBJ_NAME_LENGTH_LIMIT}) {NNUL});"
         else:
@@ -368,7 +368,7 @@ class DatabaseConnection(object):
                   f"description VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"ingredient VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
                   f"hashtag VARCHAR({self.MARIADB_VARCHAR_MAX}) {NNUL} {DFT} '', " \
-                  f"pinned BOOLEAN {NNUL} {DFT} 0, available  BOOLEAN {NNUL} {DFT} 1);"
+                  f"pinned BOOLEAN {NNUL} {DFT} 0, available BOOLEAN {NNUL} {DFT} 1);"
         elif 'tableAlias' in table:
             sql = f"{CRE_TB} IF NOT EXISTS {table} (" \
                   f"id INT AUTO_INCREMENT {NNUL}, tableString VARCHAR(10) {PRIM} {NNUL});"
@@ -420,7 +420,7 @@ class DatabaseConnection(object):
             args['AESIV'] = (aes_iv, None, 50)
         for key, (val, min_, max_) in args.items():
             if val is not None:
-                if val:
+                if val != '':  # if get empty string, then update value to default value.
                     if min_ is None:
                         if len(val) > max_:
                             raise ValueError(f"Length of {key} is too long.")
@@ -428,7 +428,7 @@ class DatabaseConnection(object):
                         if val < min_ or val > max_:
                             raise ValueError(f"{key} must be between {min_} and {max_}.")
                     kwargs[key] = val
-                    upd_his.append(f"{key}={_V_(val)}")
+                    upd_his.append(f"{key}=" + (f"{val}" if isinstance(val, int) else f"'{val}'"))
                 else:
                     kwargs[key] = '' if min_ is None else -1
                     del_his.append(key)
@@ -707,7 +707,7 @@ class DatabaseConnection(object):
               'businessCategory': (business_category, n, 1000), 'businessSubCategory': (business_sub_category, n, 2000)}
         for key, (val, min_, max_) in ag.items():
             if val is not None:
-                if val:
+                if val != '':  # if get empty string, then update value to default value.
                     if min_ is None:
                         if len(val) > max_:
                             raise ValueError(f"Length of {key} is too long.")
@@ -730,21 +730,39 @@ class DatabaseConnection(object):
 
     @check_db_connection
     def register_store_item_list(self, user_id: str, pos_number: int,
-                                 new_list: list[list] = None, update_list: list[list] = None) -> int:
+                                 new_list: list[dict] = None, update_list: list[dict] = None) -> int:
         """ Register store item list to user database.
-        :param new_list: list of new items. [[name, price, type, photoUrl, ...], ...]
-        :param update_list: list of items need to be updated. [[name, price, type, photoUrl, ...], ...]
+        :param new_list: list of new items. [{name, price, type, photoUrl, ...}, ...]
+        :param update_list: list of items need to be updated. [{name, price, type, photoUrl, ...}, ...]
         """
         table = f"{user_id}-{pos_number}-items"
 
-        if new_list:
-            for new_item in new_list:
-                name, price, item_type, photo_url, description, ingredient, hashtag, pinned, available = new_item
-                # 이 변수들의 제약사항 질문, 그리고 이 변수들이 넘어오는 list에 전부 들어가 있는지 아니면 optional인 변수들은 안 들어갈 수 있는지 질문.
-        # do insert
-        result = self.__write_to_store_db(INS, table, )
-        # do update
-        result = self.__write_to_store_db(UPD, table, )
+        new_kwargs: dict[str, str | int] = {}
+        update_kwargs: dict[str, str | int] = {}
+
+        n = None
+        ag = {'name': ('name', n, 300), 'price': ('price', self.MARIADB_BIGINT_MIN, self.MARIADB_BIGINT_MAX),
+              'type': ('type', n, 100), 'photoUrl': ('photo_url', n, self.MARIADB_VARCHAR_MAX),
+              'description': ('description', n, self.MARIADB_VARCHAR_MAX),
+              'ingredient': ('ingredient', n, self.MARIADB_VARCHAR_MAX),
+              'hashtag': ('hashtag', n, self.MARIADB_VARCHAR_MAX),
+              'pinned': ('pinned', False, True), 'available': ('available', False, True)}
+        for kwargs, raw in ((new_kwargs, new_list), (update_kwargs, update_list)):
+            for key, (raw_key, min_, max_) in ag.items():
+                if raw_key in raw:  # check if raw_key is in raw
+                    val = raw_key[raw]
+                    if min_ is None:
+                        if len(val) > max_:
+                            raise ValueError(f"Length of {key} is too long.")
+                    elif min_ is False:
+                        val = 0 if val in (0, False, '') else 1  # determined to be TRUE except for 0, False, empty str
+                    else:
+                        if val < min_ or val > max_:
+                            raise ValueError(f"{key} must be between {min_} and {max_}.")
+                    kwargs[key] = val
+
+        result = self.__write_to_store_db(INS, table, **new_kwargs)  # do insert
+        result += self.__write_to_store_db(UPD, table, **update_kwargs)  # do update
         self.__store_database.commit()
         return result
 

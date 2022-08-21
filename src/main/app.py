@@ -70,6 +70,8 @@ def create_app():
                     abort_with_logging(e, UNAUTHORIZED, description=f"[{type(e).__name__}] {str(e)}")
                 except ForbiddenAccessError as e:
                     abort_with_logging(e, FORBIDDEN, description=f"[{type(e).__name__}] {str(e)}")
+                except Exception as e:
+                    abort_with_logging(e, INTERNAL_SERVER_ERROR, description="An unknown error occurred.")
         notice_service_denial.__name__ = func.__name__  # rename function name
         return notice_service_denial
 
@@ -178,7 +180,7 @@ def create_app():
         if info_type not in ('info', 'pos', 'item'):
             abort(NOT_FOUND, description="Resource not found")
         parsed_json = parse_json(request)
-        result = ap.update_data_unit_info(parsed_json[0], pos_number, **parsed_json[1])
+        result = ap.update_data_unit_info(parsed_json[0], pos_number, info_type, **parsed_json[1])
         return jsonify({'status': "success" if result else "fail"})
 
     @app.post('/user/info/', defaults={'detail': None, 'identifier': None, 'info_type': 'info'})  # common request

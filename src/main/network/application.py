@@ -109,10 +109,11 @@ def update_data_unit_info(firebase_id_token: str, pos_number: int = None, info_t
         result = unit.update_user_info(**kwargs) if unit is not None else None
     else:
         unit = Store.get_store_by_firebase_token(firebase_id_token, pos_number)
-        result = unit.update_store_info(**kwargs) if unit is not None else None
+        result = None if unit is None \
+            else unit.update_store_info(**kwargs) if info_type == 'pos' else unit.update_store_item_list(**kwargs)
     if result is None:
         raise UnauthorizedClientError(INVALID_ID_TOKEN_ERROR)
-    return len(kwargs) == result
+    return len(kwargs) == result if info_type != 'pos' else sum([len(value) for value in kwargs.values()]) == result
 
 
 def get_data_unit_info(firebase_id_token: str, pos_number: int = None,
