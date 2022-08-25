@@ -157,9 +157,7 @@ $ timedatectl
 ##### - [KO] rootCA 인증서 비밀번호 생성 (init.py) => 인증서 생성 => 서버 실행 되는지 확인 (run.sh/bat 실행)
 ```sh
 <-- After initialization, check if the server is running. -->
-$ cd src/main
-$ sudo python3 ./init.py
-$ cd ../../
+$ sudo python3 .src/main/init.py
 $ sudo ./run.sh
 >> INFO:waitress:Serving on http://127.0.0.1:5000
 ```
